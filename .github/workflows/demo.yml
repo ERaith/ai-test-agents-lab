@@ -62,7 +62,7 @@ jobs:
           echo "## 📝 Phase 1: Test Planning" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          npm run agent:plan -- ${{ github.event.inputs.story_id }} --skip-approval
+          npx tsx src/cli.ts plan ${{ github.event.inputs.story_id }} --skip-approval
           
           echo "✅ Test plan generated" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -74,7 +74,7 @@ jobs:
           echo "## 🥒 Phase 2: Gherkin Scenarios" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          npm run agent:cases -- ${{ github.event.inputs.story_id }} --skip-approval
+          npx tsx src/cli.ts cases ${{ github.event.inputs.story_id }} --skip-approval
           
           echo "✅ Gherkin scenarios generated" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -86,7 +86,7 @@ jobs:
           echo "## 💻 Phase 3: Cypress Code" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          npm run agent:code -- ${{ github.event.inputs.story_id }} --skip-approval
+          npx tsx src/cli.ts code ${{ github.event.inputs.story_id }} --skip-approval
           
           echo "✅ Cypress tests generated" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -98,22 +98,28 @@ jobs:
           echo "## 📊 Generated Artifacts" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           
-          echo "### Test Plan" >> $GITHUB_STEP_SUMMARY
-          echo '```markdown' >> $GITHUB_STEP_SUMMARY
-          head -100 "test-artifacts/${{ github.event.inputs.story_id }}/test-plan.md" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f "test-artifacts/${{ github.event.inputs.story_id }}/test-plan.md" ]; then
+            echo "### Test Plan" >> $GITHUB_STEP_SUMMARY
+            echo '```markdown' >> $GITHUB_STEP_SUMMARY
+            head -100 "test-artifacts/${{ github.event.inputs.story_id }}/test-plan.md" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
           
-          echo "### Gherkin Scenarios" >> $GITHUB_STEP_SUMMARY
-          echo '```gherkin' >> $GITHUB_STEP_SUMMARY
-          head -80 "test-artifacts/${{ github.event.inputs.story_id }}/scenarios.feature" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f "test-artifacts/${{ github.event.inputs.story_id }}/scenarios.feature" ]; then
+            echo "### Gherkin Scenarios" >> $GITHUB_STEP_SUMMARY
+            echo '```gherkin' >> $GITHUB_STEP_SUMMARY
+            head -80 "test-artifacts/${{ github.event.inputs.story_id }}/scenarios.feature" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+          fi
           
-          echo "### Cypress Code (first 100 lines)" >> $GITHUB_STEP_SUMMARY
-          echo '```typescript' >> $GITHUB_STEP_SUMMARY
-          head -100 "cypress/e2e/${{ github.event.inputs.story_id }}.cy.ts" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          if [ -f "cypress/e2e/${{ github.event.inputs.story_id }}.cy.ts" ]; then
+            echo "### Cypress Code (first 100 lines)" >> $GITHUB_STEP_SUMMARY
+            echo '```typescript' >> $GITHUB_STEP_SUMMARY
+            head -100 "cypress/e2e/${{ github.event.inputs.story_id }}.cy.ts" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: Upload all artifacts
         uses: actions/upload-artifact@v4

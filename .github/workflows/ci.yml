@@ -6,9 +6,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
 
 jobs:
   validate:
@@ -31,11 +31,10 @@ jobs:
       - name: Type check
         run: npm run lint
 
-      - name: Test workflow (simulation mode)
-        run: npm run test:workflow -- story-001-delete-user
+      - name: Test workflow
+        run: npx tsx src/test-workflow.ts story-001-delete-user
         env:
-          # No API key = simulation mode
-          ANTHROPIC_API_KEY: ''
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
   # Optional: Run actual Cypress tests if they exist
   cypress:
