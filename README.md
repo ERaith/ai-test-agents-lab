@@ -2,7 +2,7 @@
 
 > An enterprise-ready agentic testing workflow with planning and execution agents
 
-[![CI](https://github.com/YOUR_USERNAME/ai-test-agents-lab/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_USERNAME/ai-test-agents-lab/actions/workflows/ci.yml)
+[![CI](https://github.com/ERaith/ai-test-agents-lab/actions/workflows/ci.yml/badge.svg)](https://github.com/ERaith/ai-test-agents-lab/actions/workflows/ci.yml)
 
 ## 🎯 Purpose
 
@@ -11,36 +11,61 @@ This repository demonstrates how to build an **agentic testing workflow** that:
 - Creates Gherkin scenarios from plans
 - Produces test automation code (Cypress)
 - Integrates with CI/CD via GitHub Actions
-- Includes human review gates at each stage
+- Includes human approval gates at each phase
 
 **Perfect for**: Learning about AI agents, preparing for interviews, or bootstrapping an enterprise testing workflow.
 
 ## 🚀 Quick Start
 
-### 1. Install Dependencies
+### Option 1: GitHub Actions (Recommended for Demo)
+
+1. Add `ANTHROPIC_API_KEY` to repository secrets
+2. Go to **Actions** → **"🎬 Demo Workflow"** → **Run workflow**
+3. Select a story and watch the magic!
+
+### Option 2: Local CLI
 
 ```bash
 npm install
-```
-
-### 2. Configure LLM (Required for real generation)
-
-```bash
-cp .env.example .env
-# Edit .env and add: ANTHROPIC_API_KEY=sk-ant-...
-```
-
-### 3. Run Interactive Demo
-
-```bash
+cp .env.example .env  # Add your ANTHROPIC_API_KEY
 npm run demo
 ```
 
-### 4. Or Run Integration Test
+## 🏢 Enterprise PR Workflow
 
-```bash
-npm run test:integration story-001-delete-user
+The flagship feature: **phased test generation with human approval gates**.
+
 ```
+PR Created (story in description) + label: generate-tests
+    │
+    ▼
+┌─────────────────────────────────────────┐
+│  Phase 1: Generate Test Plan            │
+│  → Posts plan as PR comment             │
+│  → Label: awaiting-plan-approval        │
+│  ⏸️  BLOCKED                             │
+└─────────────────────────────────────────┘
+    │
+    │ Comment: /approve-plan
+    ▼
+┌─────────────────────────────────────────┐
+│  Phase 2: Generate Gherkin Scenarios    │
+│  → Posts scenarios as PR comment        │
+│  → Label: awaiting-cases-approval       │
+│  ⏸️  BLOCKED                             │
+└─────────────────────────────────────────┘
+    │
+    │ Comment: /approve-cases
+    ▼
+┌─────────────────────────────────────────┐
+│  Phase 3: Generate Test Code            │
+│  → Commits Cypress tests to PR branch   │
+│  → Label: tests-generated               │
+│  ✅ Ready for review & merge            │
+└─────────────────────────────────────────┘
+```
+
+**See [Enterprise PR Workflow Guide](docs/ENTERPRISE-PR-WORKFLOW.md) for details.**
 
 ## 📚 Available Stories
 
@@ -73,147 +98,73 @@ npm run test:integration story-001-delete-user
 └─────────────────┘ └─────────────────┘ └─────────────────┘
 ```
 
-### Workflow Phases
+## 🔄 GitHub Actions Workflows
 
-```
-Story → [Planner] → Test Plan → [Human Review] → 
-        [Case Worker] → Gherkin → [Human Review] →
-        [Code Worker] → Test Code → [Human Review] → Done
-```
-
-## 🔄 GitHub Actions Integration
-
-This project includes three GitHub Actions workflows:
-
-### 1. CI Workflow (`ci.yml`)
-Runs on every push/PR to validate code quality.
-
-### 2. Agentic Test Generation (`agentic-tests.yml`)
-Automatically generates tests when:
-- A new story file is added to `specs/`
-- A PR is labeled with `generate-tests`
-- Manually triggered via `workflow_dispatch`
-
-```
-Trigger: PR with new story file
-   ↓
-Step 1: Planner Agent → Generate test plan
-   ↓
-Step 2: Post plan as PR comment for review
-   ↓
-Step 3: Case Worker → Generate Gherkin scenarios
-   ↓
-Step 4: Code Worker → Generate Cypress tests
-   ↓
-Step 5: Commit generated tests to PR branch
-```
-
-### 3. Demo Workflow (`demo.yml`)
-One-click demo for interviews - select a story and watch the magic happen!
-
-**To run a demo:**
-1. Go to Actions → "🎬 Demo Workflow"
-2. Click "Run workflow"
-3. Select a story from the dropdown
-4. View the generated artifacts in the Summary
-
-### Setting Up GitHub Actions
-
-1. **Add your API key as a secret:**
-   - Go to Settings → Secrets and variables → Actions
-   - Add `ANTHROPIC_API_KEY` with your API key
-
-2. **Enable workflows:**
-   - Workflows are automatically enabled when you push to GitHub
+| Workflow | Trigger | Purpose |
+|----------|---------|---------|
+| **CI** | Push/PR | Validates code, runs simulation |
+| **Demo** | Manual | One-click interview demo |
+| **Phased Generation** | PR + label | Enterprise workflow with approval gates |
 
 ## 🛠 CLI Commands
 
 ```bash
-# Interactive demo
-npm run demo
-
-# List all stories
-npm run agent:list
-
-# Run full workflow
-npm run agent:full -- story-002-user-registration
-
-# Run individual phases
-npm run agent:plan -- story-003-shopping-cart
-npm run agent:cases -- story-003-shopping-cart  
-npm run agent:code -- story-003-shopping-cart
-
-# Skip approval prompts (CI mode)
-npm run agent:full -- story-004-password-reset --skip-approval
-
-# Test LLM connection
-npm run test:llm
-
-# Test workflow (simulation mode)
-npm run test:workflow
+npm run demo                    # Interactive demo
+npm run agent:list              # List all stories
+npm run agent:full -- story-002 # Full workflow
+npm run agent:plan -- story-003 # Just planning phase
+npm run agent:cases -- story-003 # Just Gherkin phase
+npm run agent:code -- story-003 # Just code phase
 ```
 
 ## 📂 Project Structure
 
 ```
 ai-test-agents-lab/
-├── .github/
-│   └── workflows/
-│       ├── ci.yml              # Code validation
-│       ├── agentic-tests.yml   # Auto test generation
-│       └── demo.yml            # Interview demo
+├── .github/workflows/          # GitHub Actions
+│   ├── ci.yml                  # Code validation
+│   ├── demo.yml                # Interview demo
+│   └── phased-generation.yml   # Enterprise PR workflow
 ├── src/
 │   ├── agents/                 # AI agent implementations
-│   │   ├── base.ts             # Base agent class
-│   │   ├── planner.ts          # Test plan generation
-│   │   ├── case-worker.ts      # Gherkin generation
-│   │   └── code-worker.ts      # Cypress code generation
 │   ├── orchestrator/           # Workflow orchestration
 │   ├── utils/                  # LLM client, file ops
 │   └── cli.ts                  # Command-line interface
 ├── specs/                      # User stories (input)
 ├── test-artifacts/             # Generated plans & scenarios
 ├── cypress/                    # Generated test code
-└── docs/                       # Learning documentation
+└── docs/                       # Documentation
 ```
 
 ## 💰 Cost Estimates
 
-| Operation | Tokens | Cost (Claude Sonnet) |
-|-----------|--------|---------------------|
-| Test Plan | 2-4K | ~$0.01-0.02 |
-| Gherkin Scenarios | 1-2K | ~$0.005-0.01 |
-| Test Code | 2-4K | ~$0.01-0.02 |
-| **Total per story** | 5-10K | **~$0.03-0.05** |
+| Operation | Cost (Claude Sonnet) |
+|-----------|---------------------|
+| Full story (3 phases) | ~$0.03-0.05 |
 
 ## 🎤 Interview Talking Points
 
 1. **What is agentic testing?**
-   > AI agents that reason, plan, and execute autonomously vs. rigid scripts
+   > AI agents that reason, plan, and execute—not just scripts
 
-2. **How does it differ from traditional automation?**
-   > Planning phase - AI analyzes requirements and generates test strategies
+2. **How do you trust AI-generated tests?**
+   > Human-in-the-loop: approval gates at each phase, full audit trail
 
-3. **What about quality/trust?**
-   > Human-in-the-loop pattern with approval gates and clear artifacts
+3. **How does it integrate with existing workflows?**
+   > PR-based: story in PR description, tests committed to PR branch
 
-4. **How does it integrate with CI/CD?**
-   > GitHub Actions workflow triggers on story changes, posts plans for review
+4. **Enterprise considerations?**
+   > Phased approvals, audit trail in PR comments, cost management
 
-5. **Enterprise considerations?**
-   > Private LLMs for sensitive data, cost management, audit trails
-
-## 📖 Learning Resources
+## 📖 Documentation
 
 | Document | Description |
 |----------|-------------|
-| [Agentic Testing Guide](docs/AGENTIC-TESTING-GUIDE.md) | Comprehensive architecture guide |
+| [Enterprise PR Workflow](docs/ENTERPRISE-PR-WORKFLOW.md) | **Phased workflow with approval gates** |
+| [Agentic Testing Guide](docs/AGENTIC-TESTING-GUIDE.md) | Architecture deep-dive |
 | [Interview Quick Reference](docs/INTERVIEW-QUICK-REFERENCE.md) | One-page cheat sheet |
+| [GitHub Actions Setup](docs/GITHUB-ACTIONS-SETUP.md) | CI/CD configuration |
 
 ## 📜 License
 
-MIT - Feel free to use for learning and production.
-
----
-
-**Questions?** Check the [comprehensive guide](docs/AGENTIC-TESTING-GUIDE.md) or open an issue.
+MIT
