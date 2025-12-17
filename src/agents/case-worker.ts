@@ -10,15 +10,9 @@
  * and tags."
  */
 
-import { AgentInput, SystemContext } from '../types.js';
+import { AgentInput, SystemContext, CaseWorkerPayload } from '../types.js';
 import { LLMMessage } from '../utils/llm.js';
 import { BaseAgent, formatContext } from './base.js';
-
-export interface CaseWorkerPayload {
-  testPlan: string;
-  storyId: string;
-  story: string;
-}
 
 export class CaseWorkerAgent extends BaseAgent {
   name = 'CaseWorkerAgent';

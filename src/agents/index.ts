@@ -1,8 +1,11 @@
 /**
- * Agents Index - Export all agents
+ * Agent Exports
  */
 
-export { BaseAgent } from './base.js';
-export { PlannerAgent, type PlannerPayload } from './planner.js';
-export { CaseWorkerAgent, type CaseWorkerPayload } from './case-worker.js';
-export { CodeWorkerAgent, type CodeWorkerPayload } from './code-worker.js';
+export { BaseAgent, formatContext } from './base.js';
+export { PlannerAgent } from './planner.js';
+export { CaseWorkerAgent } from './case-worker.js';
+export { CodeWorkerAgent } from './code-worker.js';
+
+// Re-export payload types from types.ts
+export type { PlannerPayload, CaseWorkerPayload, CodeWorkerPayload } from '../types.js';

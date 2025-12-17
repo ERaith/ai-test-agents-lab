@@ -10,14 +10,7 @@
  * 
  * Usage:
  *   npx tsx src/test-integration.ts [story-id]
- *   
- * Examples:
- *   npx tsx src/test-integration.ts story-001-delete-user
- *   npx tsx src/test-integration.ts story-002-user-registration
  */
-
-// Load environment variables first
-import './utils/env.js';
 
 import { PlannerAgent, CaseWorkerAgent, CodeWorkerAgent } from './agents/index.js';
 import { loadSystemContext } from './utils/context.js';
@@ -79,28 +72,28 @@ async function runIntegrationTest(storyId: string): Promise<void> {
     },
   });
 
-  if (!planResult.success) {
+  if (!planResult.success || !planResult.result) {
     console.error(`\n❌ Planning failed: ${planResult.error}`);
     process.exit(1);
   }
 
-  console.log(`\n✅ Test plan generated (${planResult.result?.length} chars)`);
+  console.log(`\n✅ Test plan generated (${planResult.result.length} chars)`);
   
   if (planResult.metadata?.tokens) {
-    totalInputTokens += planResult.metadata.tokens.inputTokens;
-    totalOutputTokens += planResult.metadata.tokens.outputTokens;
+    totalInputTokens += planResult.metadata.tokens.inputTokens || 0;
+    totalOutputTokens += planResult.metadata.tokens.outputTokens || 0;
   }
 
   // Save plan
   const planPath = `test-artifacts/${storyId}/test-plan.md`;
-  await writeFile(planPath, planResult.result!);
+  await writeFile(planPath, planResult.result);
 
   // Show preview
   console.log('\n📄 Plan Preview (first 30 lines):');
   console.log('─'.repeat(50));
-  const planLines = planResult.result!.split('\n').slice(0, 30);
+  const planLines = planResult.result.split('\n').slice(0, 30);
   console.log(planLines.join('\n'));
-  if (planResult.result!.split('\n').length > 30) {
+  if (planResult.result.split('\n').length > 30) {
     console.log('... (truncated)');
   }
 
@@ -116,34 +109,34 @@ async function runIntegrationTest(storyId: string): Promise<void> {
   const casesResult = await caseWorker.execute({
     context,
     payload: {
-      testPlan: planResult.result!,
+      testPlan: planResult.result,
       storyId,
       story,
     },
   });
 
-  if (!casesResult.success) {
+  if (!casesResult.success || !casesResult.result) {
     console.error(`\n❌ Case generation failed: ${casesResult.error}`);
     process.exit(1);
   }
 
-  console.log(`\n✅ Gherkin scenarios generated (${casesResult.result?.length} chars)`);
+  console.log(`\n✅ Gherkin scenarios generated (${casesResult.result.length} chars)`);
 
   if (casesResult.metadata?.tokens) {
-    totalInputTokens += casesResult.metadata.tokens.inputTokens;
-    totalOutputTokens += casesResult.metadata.tokens.outputTokens;
+    totalInputTokens += casesResult.metadata.tokens.inputTokens || 0;
+    totalOutputTokens += casesResult.metadata.tokens.outputTokens || 0;
   }
 
   // Save scenarios
   const scenariosPath = `test-artifacts/${storyId}/scenarios.feature`;
-  await writeFile(scenariosPath, casesResult.result!);
+  await writeFile(scenariosPath, casesResult.result);
 
   // Show preview
   console.log('\n📄 Scenarios Preview (first 40 lines):');
   console.log('─'.repeat(50));
-  const scenarioLines = casesResult.result!.split('\n').slice(0, 40);
+  const scenarioLines = casesResult.result.split('\n').slice(0, 40);
   console.log(scenarioLines.join('\n'));
-  if (casesResult.result!.split('\n').length > 40) {
+  if (casesResult.result.split('\n').length > 40) {
     console.log('... (truncated)');
   }
 
@@ -168,35 +161,35 @@ async function runIntegrationTest(storyId: string): Promise<void> {
   const codeResult = await codeWorker.execute({
     context,
     payload: {
-      gherkinScenarios: casesResult.result!,
+      gherkinScenarios: casesResult.result,
       storyId,
       exampleTests: '',
       helpers,
     },
   });
 
-  if (!codeResult.success) {
+  if (!codeResult.success || !codeResult.result) {
     console.error(`\n❌ Code generation failed: ${codeResult.error}`);
     process.exit(1);
   }
 
-  console.log(`\n✅ Cypress code generated (${codeResult.result?.length} chars)`);
+  console.log(`\n✅ Cypress code generated (${codeResult.result.length} chars)`);
 
   if (codeResult.metadata?.tokens) {
-    totalInputTokens += codeResult.metadata.tokens.inputTokens;
-    totalOutputTokens += codeResult.metadata.tokens.outputTokens;
+    totalInputTokens += codeResult.metadata.tokens.inputTokens || 0;
+    totalOutputTokens += codeResult.metadata.tokens.outputTokens || 0;
   }
 
   // Save code
   const codePath = `cypress/e2e/${storyId}.cy.ts`;
-  await writeFile(codePath, codeResult.result!);
+  await writeFile(codePath, codeResult.result);
 
   // Show preview
   console.log('\n📄 Code Preview (first 50 lines):');
   console.log('─'.repeat(50));
-  const codeLines = codeResult.result!.split('\n').slice(0, 50);
+  const codeLines = codeResult.result.split('\n').slice(0, 50);
   console.log(codeLines.join('\n'));
-  if (codeResult.result!.split('\n').length > 50) {
+  if (codeResult.result.split('\n').length > 50) {
     console.log('... (truncated)');
   }
 
@@ -222,19 +215,10 @@ async function runIntegrationTest(storyId: string): Promise<void> {
   console.log(`   Total Tokens:    ${(totalInputTokens + totalOutputTokens).toLocaleString()}`);
 
   // Estimate cost based on which provider we used
-  if (process.env.ANTHROPIC_API_KEY) {
-    // Claude Sonnet pricing
+  if (totalInputTokens > 0) {
     const inputCost = (totalInputTokens / 1_000_000) * 3;
     const outputCost = (totalOutputTokens / 1_000_000) * 15;
     console.log(`\n💰 Estimated Cost (Claude Sonnet):`);
-    console.log(`   Input:  $${inputCost.toFixed(4)}`);
-    console.log(`   Output: $${outputCost.toFixed(4)}`);
-    console.log(`   Total:  $${(inputCost + outputCost).toFixed(4)}`);
-  } else if (process.env.OPENAI_API_KEY) {
-    // GPT-4 Turbo pricing
-    const inputCost = (totalInputTokens / 1_000_000) * 10;
-    const outputCost = (totalOutputTokens / 1_000_000) * 30;
-    console.log(`\n💰 Estimated Cost (GPT-4 Turbo):`);
     console.log(`   Input:  $${inputCost.toFixed(4)}`);
     console.log(`   Output: $${outputCost.toFixed(4)}`);
     console.log(`   Total:  $${(inputCost + outputCost).toFixed(4)}`);

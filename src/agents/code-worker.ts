@@ -11,16 +11,9 @@
  * details."
  */
 
-import { AgentInput, SystemContext } from '../types.js';
+import { AgentInput, SystemContext, CodeWorkerPayload } from '../types.js';
 import { LLMMessage } from '../utils/llm.js';
 import { BaseAgent, formatContext } from './base.js';
-
-export interface CodeWorkerPayload {
-  gherkinScenarios: string;
-  storyId: string;
-  exampleTests?: string;
-  helpers?: string;
-}
 
 export class CodeWorkerAgent extends BaseAgent {
   name = 'CodeWorkerAgent';

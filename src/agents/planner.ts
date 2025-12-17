@@ -13,15 +13,9 @@
  * a human-reviewable document that gets approved before implementation."
  */
 
-import { AgentInput, SystemContext } from '../types.js';
+import { AgentInput, SystemContext, PlannerPayload } from '../types.js';
 import { LLMMessage } from '../utils/llm.js';
 import { BaseAgent, formatContext } from './base.js';
-
-export interface PlannerPayload {
-  story: string;
-  storyId: string;
-  existingTestPatterns?: string;
-}
 
 export class PlannerAgent extends BaseAgent {
   name = 'PlannerAgent';

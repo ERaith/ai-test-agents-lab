@@ -70,16 +70,51 @@ export interface Agent {
   execute(input: AgentInput): Promise<AgentOutput>;
 }
 
+/**
+ * Agent input with generic payload
+ * Using 'unknown' with explicit casting in agents for flexibility
+ */
 export interface AgentInput {
   context: SystemContext;
-  payload: Record<string, unknown>;
+  payload: AgentPayload;
+}
+
+/**
+ * Union type for all agent payloads
+ */
+export type AgentPayload = PlannerPayload | CaseWorkerPayload | CodeWorkerPayload;
+
+export interface PlannerPayload {
+  story: string;
+  storyId: string;
+  existingTestPatterns?: string;
+}
+
+export interface CaseWorkerPayload {
+  testPlan: string;
+  storyId: string;
+  story: string;
+}
+
+export interface CodeWorkerPayload {
+  gherkinScenarios: string;
+  storyId: string;
+  exampleTests?: string;
+  helpers?: string;
 }
 
 export interface AgentOutput {
   success: boolean;
   result?: string;
   error?: string;
-  metadata?: Record<string, unknown>;
+  metadata?: {
+    duration?: number;
+    tokens?: {
+      inputTokens: number;
+      outputTokens: number;
+    };
+    [key: string]: unknown;
+  };
 }
 
 // ============================================================================
