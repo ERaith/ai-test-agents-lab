@@ -27,6 +27,12 @@ on:
   issue_comment:
     types: [created]
 
+# Required permissions for the workflow
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
 jobs:
   # ============================================================================
   # PHASE 1: Generate Test Plan
