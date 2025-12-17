@@ -1,0 +1,21 @@
+{
+  "name": "playwright-test-agent",
+  "version": "1.0.0",
+  "description": "AI agent that generates Playwright tests from URL analysis",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "generate": "node src/index.js",
+    "test": "npx playwright test",
+    "test:ui": "npx playwright test --ui"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.0",
+    "@playwright/test": "^1.48.0",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "playwright": "^1.48.0"
+  }
+}

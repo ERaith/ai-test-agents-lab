@@ -1,0 +1,417 @@
+# ============================================================================
+# AGENTIC TEST GENERATION WORKFLOW
+# ============================================================================
+# 
+# This workflow automatically generates test artifacts when:
+# 1. A new story file is added to specs/
+# 2. A PR is labeled with "generate-tests"
+# 3. Manually triggered via workflow_dispatch
+#
+# The workflow follows a human-in-the-loop pattern:
+# - Phase 1: Generate test plan and post for review
+# - Phase 2: On approval, generate Gherkin scenarios
+# - Phase 3: Generate Cypress test code
+# - Phase 4: Commit generated files to PR branch
+#
+# INTERVIEW TALKING POINT: "We integrate agentic testing into CI/CD with
+# human approval gates. The AI generates artifacts, but humans review
+# before tests are committed to the codebase."
+# ============================================================================
+
+name: Agentic Test Generation
+
+on:
+  # Trigger on PR with specific label
+  pull_request:
+    types: [labeled, opened, synchronize]
+    paths:
+      - 'specs/**/*.md'
+  
+  # Manual trigger with story selection
+  workflow_dispatch:
+    inputs:
+      story_id:
+        description: 'Story ID to generate tests for (e.g., story-001-delete-user)'
+        required: true
+        type: string
+      skip_approval:
+        description: 'Skip approval gates (for testing)'
+        required: false
+        type: boolean
+        default: false
+      phase:
+        description: 'Which phase to run'
+        required: true
+        type: choice
+        options:
+          - full
+          - plan-only
+          - cases-only
+          - code-only
+        default: full
+
+# Prevent concurrent runs on same PR
+concurrency:
+  group: agentic-tests-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # ============================================================================
+  # JOB 1: Detect which stories need test generation
+  # ============================================================================
+  detect-stories:
+    name: 📋 Detect Stories
+    runs-on: ubuntu-latest
+    outputs:
+      stories: ${{ steps.find-stories.outputs.stories }}
+      has_stories: ${{ steps.find-stories.outputs.has_stories }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find stories to process
+        id: find-stories
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Manual trigger - use provided story ID
+            STORIES='["${{ github.event.inputs.story_id }}"]'
+          elif [ "${{ github.event.action }}" = "labeled" ] && [ "${{ github.event.label.name }}" = "generate-tests" ]; then
+            # Label trigger - find all story files in PR
+            STORIES=$(gh pr diff ${{ github.event.pull_request.number }} --name-only | \
+              grep '^specs/.*\.md$' | \
+              sed 's|specs/||;s|\.md||' | \
+              jq -R -s -c 'split("\n") | map(select(length > 0))')
+          else
+            # PR with spec changes - find changed story files
+            STORIES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | \
+              grep '^specs/.*\.md$' | \
+              sed 's|specs/||;s|\.md||' | \
+              jq -R -s -c 'split("\n") | map(select(length > 0))')
+          fi
+          
+          echo "stories=$STORIES" >> $GITHUB_OUTPUT
+          
+          if [ "$STORIES" = "[]" ] || [ -z "$STORIES" ]; then
+            echo "has_stories=false" >> $GITHUB_OUTPUT
+            echo "📭 No stories to process"
+          else
+            echo "has_stories=true" >> $GITHUB_OUTPUT
+            echo "📬 Stories to process: $STORIES"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ============================================================================
+  # JOB 2: Generate Test Plan
+  # ============================================================================
+  generate-plan:
+    name: 📝 Generate Test Plan
+    needs: detect-stories
+    if: needs.detect-stories.outputs.has_stories == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        story: ${{ fromJson(needs.detect-stories.outputs.stories) }}
+      fail-fast: false
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate test plan
+        id: plan
+        run: |
+          echo "🤖 Generating test plan for ${{ matrix.story }}..."
+          npm run agent:plan -- ${{ matrix.story }} --skip-approval
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: Upload test plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-plan-${{ matrix.story }}
+          path: test-artifacts/${{ matrix.story }}/test-plan.md
+          retention-days: 30
+
+      - name: Post plan to PR comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const planPath = `test-artifacts/${{ matrix.story }}/test-plan.md`;
+            
+            if (!fs.existsSync(planPath)) {
+              console.log('No test plan found');
+              return;
+            }
+            
+            const plan = fs.readFileSync(planPath, 'utf8');
+            const truncatedPlan = plan.length > 60000 
+              ? plan.substring(0, 60000) + '\n\n... (truncated)'
+              : plan;
+            
+            const body = `## 🤖 AI-Generated Test Plan: \`${{ matrix.story }}\`
+            
+            <details>
+            <summary>Click to expand test plan</summary>
+            
+            ${truncatedPlan}
+            
+            </details>
+            
+            ---
+            
+            **Next Steps:**
+            - ✅ Review the test plan above
+            - 💬 Comment \`/approve-plan ${{ matrix.story }}\` to proceed with test generation
+            - ❌ Comment \`/reject-plan ${{ matrix.story }}\` to request changes
+            
+            *Generated by Agentic Testing Workflow*`;
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });
+
+  # ============================================================================
+  # JOB 3: Generate Gherkin Scenarios (after plan approval)
+  # ============================================================================
+  generate-scenarios:
+    name: 🥒 Generate Scenarios
+    needs: [detect-stories, generate-plan]
+    if: |
+      always() && 
+      needs.detect-stories.outputs.has_stories == 'true' &&
+      (github.event.inputs.skip_approval == 'true' || 
+       github.event.inputs.phase == 'full' ||
+       github.event.inputs.phase == 'cases-only')
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        story: ${{ fromJson(needs.detect-stories.outputs.stories) }}
+      fail-fast: false
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download test plan
+        uses: actions/download-artifact@v4
+        with:
+          name: test-plan-${{ matrix.story }}
+          path: test-artifacts/${{ matrix.story }}
+        continue-on-error: true
+
+      - name: Generate Gherkin scenarios
+        run: |
+          echo "🥒 Generating Gherkin scenarios for ${{ matrix.story }}..."
+          npm run agent:cases -- ${{ matrix.story }} --skip-approval
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: Upload scenarios artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: scenarios-${{ matrix.story }}
+          path: test-artifacts/${{ matrix.story }}/scenarios.feature
+          retention-days: 30
+
+  # ============================================================================
+  # JOB 4: Generate Cypress Code
+  # ============================================================================
+  generate-code:
+    name: 💻 Generate Test Code
+    needs: [detect-stories, generate-scenarios]
+    if: |
+      always() && 
+      needs.detect-stories.outputs.has_stories == 'true' &&
+      (github.event.inputs.skip_approval == 'true' || 
+       github.event.inputs.phase == 'full' ||
+       github.event.inputs.phase == 'code-only')
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        story: ${{ fromJson(needs.detect-stories.outputs.stories) }}
+      fail-fast: false
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download scenarios
+        uses: actions/download-artifact@v4
+        with:
+          name: scenarios-${{ matrix.story }}
+          path: test-artifacts/${{ matrix.story }}
+        continue-on-error: true
+
+      - name: Generate Cypress test code
+        run: |
+          echo "💻 Generating Cypress code for ${{ matrix.story }}..."
+          npm run agent:code -- ${{ matrix.story }} --skip-approval
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+      - name: Upload test code artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-code-${{ matrix.story }}
+          path: cypress/e2e/${{ matrix.story }}.cy.ts
+          retention-days: 30
+
+  # ============================================================================
+  # JOB 5: Commit Generated Files to PR
+  # ============================================================================
+  commit-tests:
+    name: 📦 Commit Generated Tests
+    needs: [detect-stories, generate-code]
+    if: |
+      always() && 
+      needs.detect-stories.outputs.has_stories == 'true' &&
+      github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: generated-artifacts
+
+      - name: Copy artifacts to correct locations
+        run: |
+          # Copy test plans and scenarios
+          for dir in generated-artifacts/test-plan-*; do
+            story=$(basename "$dir" | sed 's/test-plan-//')
+            mkdir -p "test-artifacts/$story"
+            cp -r "$dir"/* "test-artifacts/$story/" 2>/dev/null || true
+          done
+          
+          for dir in generated-artifacts/scenarios-*; do
+            story=$(basename "$dir" | sed 's/scenarios-//')
+            mkdir -p "test-artifacts/$story"
+            cp -r "$dir"/* "test-artifacts/$story/" 2>/dev/null || true
+          done
+          
+          # Copy test code
+          for dir in generated-artifacts/test-code-*; do
+            story=$(basename "$dir" | sed 's/test-code-//')
+            mkdir -p "cypress/e2e"
+            cp "$dir"/*.cy.ts "cypress/e2e/" 2>/dev/null || true
+          done
+          
+          # Cleanup
+          rm -rf generated-artifacts
+
+      - name: Commit and push changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add test-artifacts/ cypress/e2e/
+          
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "🤖 Auto-generated test artifacts
+
+            Generated by Agentic Testing Workflow
+            
+            Files:
+            $(git diff --staged --name-only | head -20)
+            "
+            git push
+          fi
+
+      - name: Post completion comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = `## ✅ Test Generation Complete
+            
+            The following files have been generated and committed to this PR:
+            
+            | Type | Files |
+            |------|-------|
+            | 📝 Test Plans | \`test-artifacts/*/test-plan.md\` |
+            | 🥒 Gherkin Scenarios | \`test-artifacts/*/scenarios.feature\` |
+            | 💻 Cypress Tests | \`cypress/e2e/*.cy.ts\` |
+            
+            **Please review the generated files and:**
+            - ✅ Approve if tests look good
+            - 🔧 Make manual adjustments as needed
+            - 💬 Request changes if significant issues found
+            
+            *Generated by Agentic Testing Workflow*`;
+            
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });
+
+  # ============================================================================
+  # JOB 6: Summary Report
+  # ============================================================================
+  summary:
+    name: 📊 Summary
+    needs: [detect-stories, generate-plan, generate-scenarios, generate-code, commit-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## 🤖 Agentic Test Generation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Job | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Detect Stories | ${{ needs.detect-stories.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Generate Plans | ${{ needs.generate-plan.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Generate Scenarios | ${{ needs.generate-scenarios.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Generate Code | ${{ needs.generate-code.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit Tests | ${{ needs.commit-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Stories processed:** ${{ needs.detect-stories.outputs.stories }}" >> $GITHUB_STEP_SUMMARY
