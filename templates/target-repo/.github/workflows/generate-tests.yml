@@ -120,6 +120,10 @@ jobs:
           aws s3 sync ".ai-agents/test-artifacts/${{ steps.paths.outputs.story_id }}/" \
             "s3://${{ vars.S3_BUCKET }}/${{ steps.paths.outputs.s3_prefix }}/artifacts/" --quiet
 
+          # Also save the story file for Phase 2/3
+          aws s3 cp ".ai-agents/specs/${{ steps.paths.outputs.story_id }}.md" \
+            "s3://${{ vars.S3_BUCKET }}/${{ steps.paths.outputs.s3_prefix }}/specs/${{ steps.paths.outputs.story_id }}.md" --quiet
+
           # Update cross-PR memory
           aws s3 sync ".ai-agents/memory/" \
             "s3://${{ vars.S3_BUCKET }}/${{ github.repository }}/memory/" --quiet || true
@@ -217,8 +221,15 @@ jobs:
       - name: Load artifacts from S3
         run: |
           mkdir -p ".ai-agents/test-artifacts/${{ steps.paths.outputs.story_id }}"
+          mkdir -p ".ai-agents/specs"
+
+          # Download artifacts
           aws s3 sync "s3://${{ vars.S3_BUCKET }}/${{ steps.paths.outputs.s3_prefix }}/artifacts/" \
             ".ai-agents/test-artifacts/${{ steps.paths.outputs.story_id }}/" --quiet
+
+          # Download story file
+          aws s3 cp "s3://${{ vars.S3_BUCKET }}/${{ steps.paths.outputs.s3_prefix }}/specs/${{ steps.paths.outputs.story_id }}.md" \
+            ".ai-agents/specs/${{ steps.paths.outputs.story_id }}.md" --quiet
 
           if [ ! -f ".ai-agents/test-artifacts/${{ steps.paths.outputs.story_id }}/test-plan.md" ]; then
             echo "❌ Test plan not found in S3. Add 'generate-tests' label first."
@@ -337,8 +348,15 @@ jobs:
       - name: Load artifacts from S3
         run: |
           mkdir -p ".ai-agents/test-artifacts/${{ steps.paths.outputs.story_id }}"
+          mkdir -p ".ai-agents/specs"
+
+          # Download artifacts
           aws s3 sync "s3://${{ vars.S3_BUCKET }}/${{ steps.paths.outputs.s3_prefix }}/artifacts/" \
             ".ai-agents/test-artifacts/${{ steps.paths.outputs.story_id }}/" --quiet
+
+          # Download story file
+          aws s3 cp "s3://${{ vars.S3_BUCKET }}/${{ steps.paths.outputs.s3_prefix }}/specs/${{ steps.paths.outputs.story_id }}.md" \
+            ".ai-agents/specs/${{ steps.paths.outputs.story_id }}.md" --quiet
 
           if [ ! -f ".ai-agents/test-artifacts/${{ steps.paths.outputs.story_id }}/scenarios.feature" ]; then
             echo "❌ Scenarios not found in S3. Add 'approve-plan' label first."
