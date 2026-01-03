@@ -12,6 +12,6 @@
     "rootDir": "./",
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["src/**/*", "app/**/*"],
-  "exclude": ["node_modules", "dist", "cypress"]
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "cypress", "app", "playwright"]
 }

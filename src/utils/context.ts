@@ -12,7 +12,7 @@
 import { SystemContext, DomainConstraint } from '../types.js';
 import { readFile, fileExists } from './files.js';
 
-const DEFAULT_CONTEXT_PATH = 'ai/config/system-context.md';
+const DEFAULT_CONTEXT_PATH = 'src/prompts/system-context.md';
 
 /**
  * Load and parse the system context file
