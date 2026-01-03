@@ -120,17 +120,19 @@ jobs:
             const plan = fs.readFileSync(`test-artifacts/${storyId}/test-plan.md`, 'utf8');
             const content = plan.length > 60000 ? plan.substring(0, 60000) + '\n...(truncated)' : plan;
 
-            const body = `## 📝 Phase 1: Test Plan
-
-            <details>
-            <summary>Click to expand</summary>
-
-            ${content}
-
-            </details>
-
-            ---
-            **Next:** Add label \`approve-plan\` to continue to Phase 2`;
+            const body = [
+              '## 📝 Phase 1: Test Plan',
+              '',
+              '<details>',
+              '<summary>Click to expand</summary>',
+              '',
+              content,
+              '',
+              '</details>',
+              '',
+              '---',
+              '**Next:** Add label `approve-plan` to continue to Phase 2'
+            ].join('\n');
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
@@ -214,19 +216,21 @@ jobs:
             const scenarios = fs.readFileSync(`test-artifacts/${storyId}/scenarios.feature`, 'utf8');
             const content = scenarios.length > 60000 ? scenarios.substring(0, 60000) + '\n...(truncated)' : scenarios;
 
-            const body = `## 🥒 Phase 2: Gherkin Scenarios
-
-            <details>
-            <summary>Click to expand</summary>
-
-            ~~~gherkin
-            ${content}
-            ~~~
-
-            </details>
-
-            ---
-            **Next:** Add label \`approve-cases\` to continue to Phase 3`;
+            const body = [
+              '## 🥒 Phase 2: Gherkin Scenarios',
+              '',
+              '<details>',
+              '<summary>Click to expand</summary>',
+              '',
+              '~~~gherkin',
+              content,
+              '~~~',
+              '',
+              '</details>',
+              '',
+              '---',
+              '**Next:** Add label `approve-cases` to continue to Phase 3'
+            ].join('\n');
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
@@ -335,25 +339,28 @@ jobs:
             const code = fs.readFileSync(testFile, 'utf8');
             const preview = code.split('\n').slice(0, 50).join('\n');
 
-            const body = `## 💻 Phase 3: Test Code
 
-            ✅ **All phases complete!**
-
-            <details>
-            <summary>Click to expand code</summary>
-
-            ~~~typescript
-            ${preview}
-            ~~~
-
-            </details>
-
-            ### Generated Files
-            - \`${testFile}\`
-            - \`test-artifacts/${storyId}/test-plan.md\`
-            - \`test-artifacts/${storyId}/scenarios.feature\`
-
-            **Next:** Pull changes, review, and merge!`;
+            const body = [
+              '## 💻 Phase 3: Test Code',
+              '',
+              '✅ **All phases complete!**',
+              '',
+              '<details>',
+              '<summary>Click to expand code</summary>',
+              '',
+              '~~~typescript',
+              preview,
+              '~~~',
+              '',
+              '</details>',
+              '',
+              '### Generated Files',
+              `- \`${testFile}\``,
+              `- \`test-artifacts/${storyId}/test-plan.md\``,
+              `- \`test-artifacts/${storyId}/scenarios.feature\``,
+              '',
+              '**Next:** Pull changes, review, and merge!'
+            ].join('\n');
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,
