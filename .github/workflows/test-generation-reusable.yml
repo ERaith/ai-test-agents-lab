@@ -98,6 +98,31 @@ on:
         type: string
         default: 'us-east-1'
 
+      # Caller repository context (for comments/labels/commits)
+      caller_repo:
+        description: 'Caller repository (owner/repo)'
+        required: false
+        type: string
+        default: ''
+
+      pr_number:
+        description: 'PR number for comments/labels'
+        required: false
+        type: number
+        default: 0
+
+      pr_head_ref:
+        description: 'PR head branch for commits'
+        required: false
+        type: string
+        default: ''
+
+      trigger_label:
+        description: 'Label that triggered this phase (will be removed)'
+        required: false
+        type: string
+        default: ''
+
     secrets:
       ANTHROPIC_API_KEY:
         description: 'Anthropic API key for Claude'
@@ -107,6 +132,9 @@ on:
         required: false
       AWS_SECRET_ACCESS_KEY:
         description: 'AWS secret access key (optional, for S3)'
+        required: false
+      CALLER_GITHUB_TOKEN:
+        description: 'GitHub token from caller for PR comments/labels/commits'
         required: false
 
     outputs:
@@ -367,3 +395,145 @@ jobs:
             ai-test-agents/playwright/tests/
             ai-test-agents/cypress/e2e/
           if-no-files-found: ignore
+
+  # ============================================================================
+  # Post-generation: Handle PR comments, labels, and commits
+  # ============================================================================
+  post-generate:
+    name: Update PR
+    needs: generate
+    runs-on: ubuntu-latest
+    if: inputs.caller_repo != '' && inputs.pr_number != 0
+
+    steps:
+      - name: Post comment and update labels
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.CALLER_GITHUB_TOKEN }}
+          script: |
+            const [owner, repo] = '${{ inputs.caller_repo }}'.split('/');
+            const prNumber = ${{ inputs.pr_number }};
+            const phase = '${{ inputs.phase }}';
+            const triggerLabel = '${{ inputs.trigger_label }}';
+
+            // Get outputs from generate job
+            const testPlan = `${{ needs.generate.outputs.test_plan }}`;
+            const scenarios = `${{ needs.generate.outputs.scenarios }}`;
+            const testCode = `${{ needs.generate.outputs.test_code }}`;
+
+            let body = '';
+            let nextLabel = '';
+
+            if (phase === 'plan') {
+              const content = testPlan.length > 60000 ? testPlan.substring(0, 60000) + '\n...(truncated)' : testPlan;
+              body = `## 📝 Phase 1: Test Plan
+
+            <details>
+            <summary>Click to expand</summary>
+
+            ${content}
+
+            </details>
+
+            ---
+            **Next:** Add label \`approve-plan\` to continue to Phase 2`;
+            } else if (phase === 'cases') {
+              const content = scenarios.length > 60000 ? scenarios.substring(0, 60000) + '\n...(truncated)' : scenarios;
+              body = `## 🥒 Phase 2: Gherkin Scenarios
+
+            <details>
+            <summary>Click to expand</summary>
+
+            \`\`\`gherkin
+            ${content}
+            \`\`\`
+
+            </details>
+
+            ---
+            **Next:** Add label \`approve-cases\` to continue to Phase 3`;
+            } else if (phase === 'code') {
+              const preview = testCode.split('\n').slice(0, 50).join('\n');
+              body = `## 💻 Phase 3: Test Code
+
+            ✅ **All phases complete!** Test code committed to this PR.
+
+            <details>
+            <summary>Click to expand code</summary>
+
+            \`\`\`typescript
+            ${preview}
+            \`\`\`
+
+            </details>
+
+            **Next:** Pull changes, review, and merge!`;
+              nextLabel = 'tests-generated';
+            }
+
+            // Post comment
+            if (body) {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: prNumber,
+                body
+              });
+            }
+
+            // Remove trigger label
+            if (triggerLabel) {
+              await github.rest.issues.removeLabel({
+                owner,
+                repo,
+                issue_number: prNumber,
+                name: triggerLabel
+              }).catch(() => {});
+            }
+
+            // Add completion label for phase 3
+            if (nextLabel) {
+              await github.rest.issues.addLabels({
+                owner,
+                repo,
+                issue_number: prNumber,
+                labels: [nextLabel]
+              });
+            }
+
+      - name: Download test artifacts (Phase 3 only)
+        if: inputs.phase == 'code' && inputs.pr_head_ref != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: test-artifacts-${{ inputs.story_id }}
+          path: ./artifacts
+
+      - name: Checkout caller repo for commit (Phase 3 only)
+        if: inputs.phase == 'code' && inputs.pr_head_ref != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.caller_repo }}
+          ref: ${{ inputs.pr_head_ref }}
+          token: ${{ secrets.CALLER_GITHUB_TOKEN }}
+          path: caller-repo
+
+      - name: Commit test files (Phase 3 only)
+        if: inputs.phase == 'code' && inputs.pr_head_ref != ''
+        run: |
+          cd caller-repo
+          mkdir -p playwright/tests
+
+          # Copy test files from downloaded artifacts
+          find ../artifacts -name "*.spec.ts" -exec cp {} playwright/tests/ \; 2>/dev/null || true
+
+          # Check if there are files to commit
+          if [ -n "$(ls -A playwright/tests/ 2>/dev/null)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add playwright/
+            git commit -m "🤖 Add generated Playwright tests for PR #${{ inputs.pr_number }}" || echo "Nothing to commit"
+            git push
+            echo "✅ Committed test files"
+          else
+            echo "⚠️ No test files to commit"
+          fi
