@@ -219,9 +219,9 @@ jobs:
             <details>
             <summary>Click to expand</summary>
 
-            \`\`\`gherkin
+            ~~~gherkin
             ${content}
-            \`\`\`
+            ~~~
 
             </details>
 
@@ -342,9 +342,9 @@ jobs:
             <details>
             <summary>Click to expand code</summary>
 
-            \`\`\`typescript
+            ~~~typescript
             ${preview}
-            \`\`\`
+            ~~~
 
             </details>
 
