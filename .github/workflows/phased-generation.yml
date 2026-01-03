@@ -2,56 +2,50 @@
 # PHASED TEST GENERATION WORKFLOW
 # ============================================================================
 #
-# Enterprise-ready workflow with human approval gates at each phase.
+# Label-based workflow for AI-powered test generation.
 #
 # Flow:
-# 1. PR created/labeled "generate-tests" → Phase 1: Generate Plan
-# 2. Human reviews plan → Comments "/approve-plan" → Phase 2: Generate Cases
-# 3. Human reviews cases → Comments "/approve-cases" → Phase 3: Generate Code
-# 4. Code committed to PR → Ready for final review and merge
+#   1. Add label "generate-tests" → Phase 1: Generate Plan
+#   2. Add label "approve-plan"   → Phase 2: Generate Scenarios
+#   3. Add label "approve-cases"  → Phase 3: Generate Code → Add "tests-generated"
 #
-# Labels track state:
-# - generate-tests: Initial trigger
-# - awaiting-plan-approval: Plan posted, waiting for human
-# - awaiting-cases-approval: Cases posted, waiting for human  
-# - tests-generated: All phases complete
+# Labels track state (auto-managed):
+#   - generate-tests: Initial trigger (removed after Phase 1)
+#   - approve-plan: Triggers Phase 2 (removed after Phase 2)
+#   - approve-cases: Triggers Phase 3 (removed after Phase 3)
+#   - tests-generated: Final state (all phases complete)
 #
 # ============================================================================
 
-name: 🧪 Phased Test Generation
+name: Phased Test Generation
 
 on:
   pull_request:
-    types: [opened, labeled]
-  
-  issue_comment:
-    types: [created]
+    types: [labeled]
 
-# Required permissions for the workflow
 permissions:
   contents: write
   pull-requests: write
-  issues: write
 
 jobs:
-  # ============================================================================
-  # PHASE 1: Generate Test Plan
-  # ============================================================================
-  phase-1-planning:
-    name: 📝 Phase 1 - Generate Test Plan
+  # ==========================================================================
+  # Phase 1: Generate Test Plan
+  # ==========================================================================
+  phase-1-plan:
+    name: "📝 Phase 1: Generate Test Plan"
     runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'pull_request' && 
-      contains(github.event.pull_request.labels.*.name, 'generate-tests') &&
-      !contains(github.event.pull_request.labels.*.name, 'awaiting-plan-approval') &&
-      !contains(github.event.pull_request.labels.*.name, 'awaiting-cases-approval') &&
-      !contains(github.event.pull_request.labels.*.name, 'tests-generated')
-    
+    if: github.event.label.name == 'generate-tests'
+
+    outputs:
+      story_id: ${{ steps.extract.outputs.story_id }}
+
     steps:
-      - name: Checkout code
+      - name: Checkout PR branch
         uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -62,492 +56,327 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Extract story from PR
+      - name: Configure AWS (optional)
+        if: vars.S3_BUCKET != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Load context from S3
+        if: vars.S3_BUCKET != ''
+        run: |
+          aws s3 sync "s3://${{ vars.S3_BUCKET }}/${{ github.repository }}/context/" "./context/" --quiet || true
+          aws s3 sync "s3://${{ vars.S3_BUCKET }}/${{ github.repository }}/memory/" "./memory/" --quiet || true
+
+      - name: Extract story and diff
         id: extract
         uses: actions/github-script@v7
         with:
           script: |
+            const fs = require('fs');
+            const { execSync } = require('child_process');
             const pr = context.payload.pull_request;
-            const title = pr.title;
-            const body = pr.body || '';
-            
-            // Generate a story ID from PR number
             const storyId = `pr-${pr.number}`;
-            
-            // Create story content from PR
-            const storyContent = `# ${title}\n\n${body}`;
-            
-            core.setOutput('story_id', storyId);
-            core.setOutput('story_content', storyContent);
-            core.setOutput('pr_number', pr.number);
-            
-            console.log(`Story ID: ${storyId}`);
-            console.log(`Story Content:\n${storyContent}`);
 
-      - name: Save story to file
-        run: |
-          mkdir -p specs
-          cat > "specs/${{ steps.extract.outputs.story_id }}.md" << 'EOF'
-          ${{ steps.extract.outputs.story_content }}
-          EOF
+            // Save story
+            fs.mkdirSync('specs', { recursive: true });
+            fs.writeFileSync(`specs/${storyId}.md`, `# ${pr.title}\n\n${pr.body || ''}`);
+
+            // Save diff
+            try {
+              const diff = execSync(`git diff origin/${pr.base.ref}...HEAD`, { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+              fs.mkdirSync(`test-artifacts/${storyId}`, { recursive: true });
+              fs.writeFileSync(`test-artifacts/${storyId}/pr.diff`, diff);
+            } catch (e) {
+              console.log('Could not get diff:', e.message);
+            }
+
+            core.setOutput('story_id', storyId);
+            core.setOutput('pr_number', pr.number);
 
       - name: Generate test plan
-        id: plan
-        run: |
-          npx tsx src/cli.ts plan ${{ steps.extract.outputs.story_id }} --skip-approval
-          
-          # Read the generated plan
-          PLAN_PATH="test-artifacts/${{ steps.extract.outputs.story_id }}/test-plan.md"
-          if [ -f "$PLAN_PATH" ]; then
-            echo "plan_generated=true" >> $GITHUB_OUTPUT
-          else
-            echo "plan_generated=false" >> $GITHUB_OUTPUT
-          fi
+        run: npx tsx src/cli.ts plan ${{ steps.extract.outputs.story_id }} --skip-approval
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TEST_FRAMEWORK: ${{ vars.TEST_FRAMEWORK || 'playwright' }}
 
-      - name: Post plan as PR comment
-        if: steps.plan.outputs.plan_generated == 'true'
+      - name: Commit plan
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add specs/ test-artifacts/
+          git commit -m "🤖 Phase 1: Test plan for PR #${{ steps.extract.outputs.pr_number }}"
+          git push
+
+      - name: Post plan comment
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const planPath = `test-artifacts/${{ steps.extract.outputs.story_id }}/test-plan.md`;
-            const plan = fs.readFileSync(planPath, 'utf8');
-            
-            // Truncate if too long for GitHub comment
-            const maxLength = 60000;
-            const truncatedPlan = plan.length > maxLength 
-              ? plan.substring(0, maxLength) + '\n\n... (truncated, see artifacts for full plan)'
-              : plan;
-            
-            const body = `## 📝 Phase 1: AI-Generated Test Plan
-            
+            const storyId = '${{ steps.extract.outputs.story_id }}';
+            const prNumber = ${{ steps.extract.outputs.pr_number }};
+            const plan = fs.readFileSync(`test-artifacts/${storyId}/test-plan.md`, 'utf8');
+            const content = plan.length > 60000 ? plan.substring(0, 60000) + '\n...(truncated)' : plan;
+
+            const body = `## 📝 Phase 1: Test Plan
+
             <details>
-            <summary>Click to expand test plan</summary>
-            
-            ${truncatedPlan}
-            
+            <summary>Click to expand</summary>
+
+            ${content}
+
             </details>
-            
+
             ---
-            
-            ### ✅ Next Steps
-            
-            1. **Review** the test plan above
-            2. **Request changes** by commenting on specific items
-            3. **Approve** by commenting: \`/approve-plan\`
-            
-            > ⏸️ *Workflow paused - waiting for plan approval*
-            
-            ---
-            *Phase 1 of 3 • Generated by Agentic Testing Workflow*`;
-            
+            **Next:** Add label \`approve-plan\` to continue to Phase 2`;
+
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: ${{ steps.extract.outputs.pr_number }},
+              issue_number: prNumber,
               body: body
             });
 
-      - name: Upload plan artifact
-        if: steps.plan.outputs.plan_generated == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-plan-${{ steps.extract.outputs.story_id }}
-          path: test-artifacts/${{ steps.extract.outputs.story_id }}/test-plan.md
-          retention-days: 30
-
       - name: Update labels
-        if: steps.plan.outputs.plan_generated == 'true'
         uses: actions/github-script@v7
         with:
           script: |
             const prNumber = ${{ steps.extract.outputs.pr_number }};
-            
-            // Remove trigger label, add waiting label
-            try {
-              await github.rest.issues.removeLabel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                name: 'generate-tests'
-              });
-            } catch (e) {
-              console.log('Label generate-tests not found, continuing...');
-            }
-            
-            await github.rest.issues.addLabels({
+            await github.rest.issues.removeLabel({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: prNumber,
-              labels: ['awaiting-plan-approval']
-            });
+              name: 'generate-tests'
+            }).catch(() => {});
 
-  # ============================================================================
-  # PHASE 2: Generate Gherkin Scenarios (triggered by /approve-plan)
-  # ============================================================================
+  # ==========================================================================
+  # Phase 2: Generate Gherkin Scenarios
+  # ==========================================================================
   phase-2-cases:
-    name: 🥒 Phase 2 - Generate Test Cases
+    name: "🥒 Phase 2: Generate Scenarios"
     runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'issue_comment' &&
-      github.event.issue.pull_request &&
-      contains(github.event.comment.body, '/approve-plan')
-    
+    if: github.event.label.name == 'approve-plan'
+
+    outputs:
+      story_id: ${{ steps.setup.outputs.story_id }}
+
     steps:
-      - name: Get PR details
-        id: pr
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const pr = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
-            
-            core.setOutput('head_ref', pr.data.head.ref);
-            core.setOutput('pr_number', context.issue.number);
-            core.setOutput('story_id', `pr-${context.issue.number}`);
-            
-            // Check if correct label exists
-            const hasLabel = pr.data.labels.some(l => l.name === 'awaiting-plan-approval');
-            core.setOutput('has_correct_label', hasLabel.toString());
-
-      - name: Verify approval is valid
-        if: steps.pr.outputs.has_correct_label != 'true'
-        run: |
-          echo "PR does not have 'awaiting-plan-approval' label. Skipping."
-          exit 0
-
-      - name: Checkout code
-        if: steps.pr.outputs.has_correct_label == 'true'
+      - name: Checkout PR branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.pr.outputs.head_ref }}
-
-      - name: Setup Node.js
-        if: steps.pr.outputs.has_correct_label == 'true'
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install dependencies
-        if: steps.pr.outputs.has_correct_label == 'true'
-        run: npm ci
-
-      - name: Download test plan artifact
-        if: steps.pr.outputs.has_correct_label == 'true'
-        uses: actions/download-artifact@v4
-        with:
-          name: test-plan-${{ steps.pr.outputs.story_id }}
-          path: test-artifacts/${{ steps.pr.outputs.story_id }}
-        continue-on-error: true
-
-      - name: Extract story from PR
-        if: steps.pr.outputs.has_correct_label == 'true'
-        id: extract
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const pr = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
-            
-            const storyContent = `# ${pr.data.title}\n\n${pr.data.body || ''}`;
-            core.setOutput('story_content', storyContent);
-
-      - name: Save story to file
-        if: steps.pr.outputs.has_correct_label == 'true'
-        run: |
-          mkdir -p specs
-          cat > "specs/${{ steps.pr.outputs.story_id }}.md" << 'EOF'
-          ${{ steps.extract.outputs.story_content }}
-          EOF
-
-      - name: Generate Gherkin scenarios
-        if: steps.pr.outputs.has_correct_label == 'true'
-        id: cases
-        run: |
-          npx tsx src/cli.ts cases ${{ steps.pr.outputs.story_id }} --skip-approval
-          
-          CASES_PATH="test-artifacts/${{ steps.pr.outputs.story_id }}/scenarios.feature"
-          if [ -f "$CASES_PATH" ]; then
-            echo "cases_generated=true" >> $GITHUB_OUTPUT
-          else
-            echo "cases_generated=false" >> $GITHUB_OUTPUT
-          fi
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-
-      - name: Post scenarios as PR comment
-        if: steps.pr.outputs.has_correct_label == 'true' && steps.cases.outputs.cases_generated == 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const casesPath = `test-artifacts/${{ steps.pr.outputs.story_id }}/scenarios.feature`;
-            const cases = fs.readFileSync(casesPath, 'utf8');
-            
-            const maxLength = 60000;
-            const truncatedCases = cases.length > maxLength 
-              ? cases.substring(0, maxLength) + '\n\n... (truncated)'
-              : cases;
-            
-            const body = `## 🥒 Phase 2: AI-Generated Gherkin Scenarios
-            
-            <details>
-            <summary>Click to expand scenarios</summary>
-            
-            \`\`\`gherkin
-            ${truncatedCases}
-            \`\`\`
-            
-            </details>
-            
-            ---
-            
-            ### ✅ Next Steps
-            
-            1. **Review** the Gherkin scenarios above
-            2. **Request changes** by commenting on specific scenarios
-            3. **Approve** by commenting: \`/approve-cases\`
-            
-            > ⏸️ *Workflow paused - waiting for cases approval*
-            
-            ---
-            *Phase 2 of 3 • Generated by Agentic Testing Workflow*`;
-            
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: ${{ steps.pr.outputs.pr_number }},
-              body: body
-            });
-
-      - name: Upload scenarios artifact
-        if: steps.pr.outputs.has_correct_label == 'true' && steps.cases.outputs.cases_generated == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: scenarios-${{ steps.pr.outputs.story_id }}
-          path: test-artifacts/${{ steps.pr.outputs.story_id }}/scenarios.feature
-          retention-days: 30
-
-      - name: Update labels
-        if: steps.pr.outputs.has_correct_label == 'true' && steps.cases.outputs.cases_generated == 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const prNumber = ${{ steps.pr.outputs.pr_number }};
-            
-            try {
-              await github.rest.issues.removeLabel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                name: 'awaiting-plan-approval'
-              });
-            } catch (e) {
-              console.log('Label not found, continuing...');
-            }
-            
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: prNumber,
-              labels: ['awaiting-cases-approval']
-            });
-
-  # ============================================================================
-  # PHASE 3: Generate Code (triggered by /approve-cases)
-  # ============================================================================
-  phase-3-code:
-    name: 💻 Phase 3 - Generate Test Code
-    runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'issue_comment' &&
-      github.event.issue.pull_request &&
-      contains(github.event.comment.body, '/approve-cases')
-    
-    steps:
-      - name: Get PR details
-        id: pr
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const pr = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
-            
-            core.setOutput('head_ref', pr.data.head.ref);
-            core.setOutput('pr_number', context.issue.number);
-            core.setOutput('story_id', `pr-${context.issue.number}`);
-            
-            const hasLabel = pr.data.labels.some(l => l.name === 'awaiting-cases-approval');
-            core.setOutput('has_correct_label', hasLabel.toString());
-
-      - name: Verify approval is valid
-        if: steps.pr.outputs.has_correct_label != 'true'
-        run: |
-          echo "PR does not have 'awaiting-cases-approval' label. Skipping."
-          exit 0
-
-      - name: Checkout code
-        if: steps.pr.outputs.has_correct_label == 'true'
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.pr.outputs.head_ref }}
+          ref: ${{ github.head_ref }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Setup
+        id: setup
+        run: |
+          echo "story_id=pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          echo "pr_number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+
+      - name: Verify plan exists
+        run: |
+          if [ ! -f "test-artifacts/${{ steps.setup.outputs.story_id }}/test-plan.md" ]; then
+            echo "❌ Test plan not found. Add 'generate-tests' label first."
+            exit 1
+          fi
+
       - name: Setup Node.js
-        if: steps.pr.outputs.has_correct_label == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
 
       - name: Install dependencies
-        if: steps.pr.outputs.has_correct_label == 'true'
         run: npm ci
 
-      - name: Download scenarios artifact
-        if: steps.pr.outputs.has_correct_label == 'true'
-        uses: actions/download-artifact@v4
-        with:
-          name: scenarios-${{ steps.pr.outputs.story_id }}
-          path: test-artifacts/${{ steps.pr.outputs.story_id }}
-        continue-on-error: true
-
-      - name: Generate Cypress code
-        if: steps.pr.outputs.has_correct_label == 'true'
-        id: code
-        run: |
-          npx tsx src/cli.ts code ${{ steps.pr.outputs.story_id }} --skip-approval
-          
-          CODE_PATH="cypress/e2e/${{ steps.pr.outputs.story_id }}.cy.ts"
-          if [ -f "$CODE_PATH" ]; then
-            echo "code_generated=true" >> $GITHUB_OUTPUT
-          else
-            echo "code_generated=false" >> $GITHUB_OUTPUT
-          fi
+      - name: Generate scenarios
+        run: npx tsx src/cli.ts cases ${{ steps.setup.outputs.story_id }} --skip-approval
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
-      - name: Commit generated code to PR
-        if: steps.pr.outputs.has_correct_label == 'true' && steps.code.outputs.code_generated == 'true'
+      - name: Commit scenarios
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          git add test-artifacts/ cypress/e2e/
-          
-          if git diff --staged --quiet; then
-            echo "No changes to commit"
-          else
-            git commit -m "🤖 Generated test artifacts for PR #${{ steps.pr.outputs.pr_number }}
-            
-            Files:
-            - test-artifacts/${{ steps.pr.outputs.story_id }}/test-plan.md
-            - test-artifacts/${{ steps.pr.outputs.story_id }}/scenarios.feature
-            - cypress/e2e/${{ steps.pr.outputs.story_id }}.cy.ts
-            
-            Generated by Agentic Testing Workflow"
-            
-            git push
-          fi
+          git add test-artifacts/
+          git commit -m "🤖 Phase 2: Scenarios for PR #${{ steps.setup.outputs.pr_number }}"
+          git push
 
-      - name: Post completion comment
-        if: steps.pr.outputs.has_correct_label == 'true' && steps.code.outputs.code_generated == 'true'
+      - name: Post scenarios comment
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const codePath = `cypress/e2e/${{ steps.pr.outputs.story_id }}.cy.ts`;
-            
-            let codePreview = '';
-            try {
-              const code = fs.readFileSync(codePath, 'utf8');
-              const lines = code.split('\n').slice(0, 50).join('\n');
-              codePreview = lines + (code.split('\n').length > 50 ? '\n// ... (truncated)' : '');
-            } catch (e) {
-              codePreview = '// Code file not found';
-            }
-            
-            const body = `## 💻 Phase 3: AI-Generated Test Code
-            
-            ✅ **All phases complete!** Test code has been committed to this PR.
-            
+            const storyId = '${{ steps.setup.outputs.story_id }}';
+            const prNumber = ${{ steps.setup.outputs.pr_number }};
+            const scenarios = fs.readFileSync(`test-artifacts/${storyId}/scenarios.feature`, 'utf8');
+            const content = scenarios.length > 60000 ? scenarios.substring(0, 60000) + '\n...(truncated)' : scenarios;
+
+            const body = `## 🥒 Phase 2: Gherkin Scenarios
+
             <details>
-            <summary>Click to expand generated code (preview)</summary>
-            
-            \`\`\`typescript
-            ${codePreview}
+            <summary>Click to expand</summary>
+
+            \`\`\`gherkin
+            ${content}
             \`\`\`
-            
+
             </details>
-            
+
             ---
-            
-            ### 📁 Generated Files
-            
-            | File | Description |
-            |------|-------------|
-            | \`test-artifacts/${{ steps.pr.outputs.story_id }}/test-plan.md\` | Test strategy & risk analysis |
-            | \`test-artifacts/${{ steps.pr.outputs.story_id }}/scenarios.feature\` | Gherkin scenarios |
-            | \`cypress/e2e/${{ steps.pr.outputs.story_id }}.cy.ts\` | Cypress test code |
-            
-            ### ✅ Next Steps
-            
-            1. **Review** the generated code
-            2. **Adjust** selectors and implementation details as needed
-            3. **Run tests** locally: \`npx cypress run --spec cypress/e2e/${{ steps.pr.outputs.story_id }}.cy.ts\`
-            4. **Merge** when ready!
-            
-            ---
-            *Phase 3 of 3 • Generated by Agentic Testing Workflow* ✨`;
-            
+            **Next:** Add label \`approve-cases\` to continue to Phase 3`;
+
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: ${{ steps.pr.outputs.pr_number }},
+              issue_number: prNumber,
               body: body
             });
 
       - name: Update labels
-        if: steps.pr.outputs.has_correct_label == 'true' && steps.code.outputs.code_generated == 'true'
         uses: actions/github-script@v7
         with:
           script: |
-            const prNumber = ${{ steps.pr.outputs.pr_number }};
-            
-            try {
-              await github.rest.issues.removeLabel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                name: 'awaiting-cases-approval'
-              });
-            } catch (e) {
-              console.log('Label not found, continuing...');
-            }
-            
+            const prNumber = ${{ steps.setup.outputs.pr_number }};
+            await github.rest.issues.removeLabel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              name: 'approve-plan'
+            }).catch(() => {});
+
+  # ==========================================================================
+  # Phase 3: Generate Test Code
+  # ==========================================================================
+  phase-3-code:
+    name: "💻 Phase 3: Generate Tests"
+    runs-on: ubuntu-latest
+    if: github.event.label.name == 'approve-cases'
+
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup
+        id: setup
+        run: |
+          echo "story_id=pr-${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+          echo "pr_number=${{ github.event.pull_request.number }}" >> $GITHUB_OUTPUT
+
+      - name: Verify scenarios exist
+        run: |
+          if [ ! -f "test-artifacts/${{ steps.setup.outputs.story_id }}/scenarios.feature" ]; then
+            echo "❌ Scenarios not found. Add 'approve-plan' label first."
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Configure AWS (optional)
+        if: vars.S3_BUCKET != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Generate test code
+        id: code
+        run: |
+          FRAMEWORK="${{ vars.TEST_FRAMEWORK || 'playwright' }}"
+          npx tsx src/cli.ts code ${{ steps.setup.outputs.story_id }} --skip-approval
+
+          if [ "$FRAMEWORK" = "playwright" ]; then
+            echo "test_file=playwright/tests/${{ steps.setup.outputs.story_id }}.spec.ts" >> $GITHUB_OUTPUT
+            echo "test_dir=playwright/tests" >> $GITHUB_OUTPUT
+          else
+            echo "test_file=cypress/e2e/${{ steps.setup.outputs.story_id }}.cy.ts" >> $GITHUB_OUTPUT
+            echo "test_dir=cypress/e2e" >> $GITHUB_OUTPUT
+          fi
+          echo "framework=$FRAMEWORK" >> $GITHUB_OUTPUT
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TEST_FRAMEWORK: ${{ vars.TEST_FRAMEWORK || 'playwright' }}
+
+      - name: Commit test code
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ${{ steps.code.outputs.test_dir }}/
+          git commit -m "🤖 Phase 3: Tests for PR #${{ steps.setup.outputs.pr_number }}"
+          git push
+
+      - name: Save context to S3
+        if: vars.S3_BUCKET != ''
+        run: |
+          aws s3 sync "./context/" "s3://${{ vars.S3_BUCKET }}/${{ github.repository }}/context/" --quiet || true
+          aws s3 sync "./memory/" "s3://${{ vars.S3_BUCKET }}/${{ github.repository }}/memory/" --quiet || true
+
+      - name: Post completion comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const storyId = '${{ steps.setup.outputs.story_id }}';
+            const prNumber = ${{ steps.setup.outputs.pr_number }};
+            const testFile = '${{ steps.code.outputs.test_file }}';
+            const code = fs.readFileSync(testFile, 'utf8');
+            const preview = code.split('\n').slice(0, 50).join('\n');
+
+            const body = `## 💻 Phase 3: Test Code
+
+            ✅ **All phases complete!**
+
+            <details>
+            <summary>Click to expand code</summary>
+
+            \`\`\`typescript
+            ${preview}
+            \`\`\`
+
+            </details>
+
+            ### Generated Files
+            - \`${testFile}\`
+            - \`test-artifacts/${storyId}/test-plan.md\`
+            - \`test-artifacts/${storyId}/scenarios.feature\`
+
+            **Next:** Pull changes, review, and merge!`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              body: body
+            });
+
+      - name: Update labels
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = ${{ steps.setup.outputs.pr_number }};
+            await github.rest.issues.removeLabel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              name: 'approve-cases'
+            }).catch(() => {});
+
             await github.rest.issues.addLabels({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: prNumber,
               labels: ['tests-generated']
             });
-
-      - name: Upload code artifact
-        if: steps.pr.outputs.has_correct_label == 'true' && steps.code.outputs.code_generated == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-code-${{ steps.pr.outputs.story_id }}
-          path: cypress/e2e/${{ steps.pr.outputs.story_id }}.cy.ts
-          retention-days: 30

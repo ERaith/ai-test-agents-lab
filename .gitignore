@@ -4,7 +4,7 @@ node_modules/
 # Build output
 dist/
 
-# Environment files (keep .env.example)
+# Environment files
 .env
 .env.local
 .env.*.local
@@ -23,13 +23,16 @@ Thumbs.db
 *.log
 npm-debug.log*
 
-# Test artifacts (optional - you may want to commit examples)
-# test-artifacts/
+# Runtime artifacts (generated during workflow)
+test-artifacts/
+specs/
+playwright/
+cypress/
 
-# Cypress
-cypress/screenshots/
-cypress/videos/
-cypress/downloads/
+# Context memory (runtime)
+memory/
+context/
+context-registry.json
 
 # TypeScript
 *.tsbuildinfo
@@ -37,3 +40,9 @@ cypress/downloads/
 # Coverage
 coverage/
 .nyc_output/
+
+# Archive (development materials, not needed for deployment)
+archive/
+
+# Private setup docs (keep local, don't commit)
+private/
