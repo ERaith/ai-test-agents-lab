@@ -29,10 +29,10 @@ specs/
 playwright/
 cypress/
 
-# Context memory (runtime)
-memory/
-context/
-context-registry.json
+# Context memory (runtime - root level only)
+/memory/
+/context/
+/context-registry.json
 
 # TypeScript
 *.tsbuildinfo
