@@ -223,9 +223,19 @@ jobs:
             S3_PREFIX="${{ github.repository }}"
           fi
 
-          # Try to download existing context
+          # Try to download existing context and memory
           aws s3 sync "s3://${{ inputs.s3_bucket }}/${S3_PREFIX}/context/" "./context/" --quiet || true
           aws s3 sync "s3://${{ inputs.s3_bucket }}/${S3_PREFIX}/memory/" "./memory/" --quiet || true
+
+          # For phases 2 and 3, also download previously generated artifacts
+          if [ "${{ inputs.phase }}" = "cases" ] || [ "${{ inputs.phase }}" = "code" ]; then
+            echo "Downloading artifacts from previous phases..."
+            mkdir -p "test-artifacts/${{ inputs.story_id }}"
+            aws s3 sync "s3://${{ inputs.s3_bucket }}/${S3_PREFIX}/artifacts/${{ inputs.story_id }}/" \
+              "./test-artifacts/${{ inputs.story_id }}/" --quiet || true
+            echo "Downloaded artifacts:"
+            ls -la "test-artifacts/${{ inputs.story_id }}/" 2>/dev/null || echo "No artifacts found"
+          fi
 
           echo "Loaded context from S3"
           ls -la context/ 2>/dev/null || echo "No context directory"
