@@ -411,73 +411,87 @@ jobs:
         with:
           github-token: ${{ secrets.CALLER_GITHUB_TOKEN }}
           script: |
-            const [owner, repo] = '${{ inputs.caller_repo }}'.split('/');
-            const prNumber = ${{ inputs.pr_number }};
-            const phase = '${{ inputs.phase }}';
-            const triggerLabel = '${{ inputs.trigger_label }}';
+            const [owner, repo] = String('${{ inputs.caller_repo }}').split('/');
+            const prNumber = Number('${{ inputs.pr_number }}');
+            const phase = String('${{ inputs.phase }}');
+            const triggerLabel = String('${{ inputs.trigger_label }}');
 
-            // Get outputs from generate job
-            const testPlan = `${{ needs.generate.outputs.test_plan }}`;
-            const scenarios = `${{ needs.generate.outputs.scenarios }}`;
-            const testCode = `${{ needs.generate.outputs.test_code }}`;
+            // Job outputs come through as strings (possibly empty)
+            const testPlan = String(`${{ needs.generate.outputs.test_plan }}` || '');
+            const scenarios = String(`${{ needs.generate.outputs.scenarios }}` || '');
+            const testCode = String(`${{ needs.generate.outputs.test_code }}` || '');
 
-            let body = '';
-            let nextLabel = '';
+            let bodyLines = [];
+            let completionLabel = '';
 
             if (phase === 'plan') {
-              const content = testPlan.length > 60000 ? testPlan.substring(0, 60000) + '\n...(truncated)' : testPlan;
-              body = `## 📝 Phase 1: Test Plan
+              const content = testPlan.length > 60000 ? testPlan.slice(0, 60000) + '\n...(truncated)' : testPlan;
 
-            <details>
-            <summary>Click to expand</summary>
+              bodyLines = [
+                '## 📝 Phase 1: Test Plan',
+                '',
+                '<details>',
+                '<summary>Click to expand</summary>',
+                '',
+                content,
+                '',
+                '</details>',
+                '',
+                '---',
+                '**Next:** Add label `approve-plan` to continue to Phase 2'
+              ];
+            }
 
-            ${content}
+            if (phase === 'cases') {
+              const content = scenarios.length > 60000 ? scenarios.slice(0, 60000) + '\n...(truncated)' : scenarios;
 
-            </details>
+              bodyLines = [
+                '## 🥒 Phase 2: Gherkin Scenarios',
+                '',
+                '<details>',
+                '<summary>Click to expand</summary>',
+                '',
+                '~~~gherkin',
+                content,
+                '~~~',
+                '',
+                '</details>',
+                '',
+                '---',
+                '**Next:** Add label `approve-cases` to continue to Phase 3'
+              ];
+            }
 
-            ---
-            **Next:** Add label \`approve-plan\` to continue to Phase 2`;
-            } else if (phase === 'cases') {
-              const content = scenarios.length > 60000 ? scenarios.substring(0, 60000) + '\n...(truncated)' : scenarios;
-              body = `## 🥒 Phase 2: Gherkin Scenarios
-
-            <details>
-            <summary>Click to expand</summary>
-
-            \`\`\`gherkin
-            ${content}
-            \`\`\`
-
-            </details>
-
-            ---
-            **Next:** Add label \`approve-cases\` to continue to Phase 3`;
-            } else if (phase === 'code') {
+            if (phase === 'code') {
               const preview = testCode.split('\n').slice(0, 50).join('\n');
-              body = `## 💻 Phase 3: Test Code
 
-            ✅ **All phases complete!** Test code committed to this PR.
+              bodyLines = [
+                '## 💻 Phase 3: Test Code',
+                '',
+                '✅ **All phases complete!** Test code committed to this PR.',
+                '',
+                '<details>',
+                '<summary>Click to expand code</summary>',
+                '',
+                '~~~typescript',
+                preview,
+                '~~~',
+                '',
+                '</details>',
+                '',
+                '**Next:** Pull changes, review, and merge!'
+              ];
 
-            <details>
-            <summary>Click to expand code</summary>
-
-            \`\`\`typescript
-            ${preview}
-            \`\`\`
-
-            </details>
-
-            **Next:** Pull changes, review, and merge!`;
-              nextLabel = 'tests-generated';
+              completionLabel = 'tests-generated';
             }
 
             // Post comment
-            if (body) {
+            if (bodyLines.length) {
               await github.rest.issues.createComment({
                 owner,
                 repo,
                 issue_number: prNumber,
-                body
+                body: bodyLines.join('\n')
               });
             }
 
@@ -491,13 +505,13 @@ jobs:
               }).catch(() => {});
             }
 
-            // Add completion label for phase 3
-            if (nextLabel) {
+            // Add completion label (phase 3)
+            if (completionLabel) {
               await github.rest.issues.addLabels({
                 owner,
                 repo,
                 issue_number: prNumber,
-                labels: [nextLabel]
+                labels: [completionLabel]
               });
             }
 
