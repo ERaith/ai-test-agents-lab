@@ -1,170 +1,151 @@
-# AI Test Agents Lab 🤖
+# AI Test Agents Lab
 
-> An enterprise-ready agentic testing workflow with planning and execution agents
+Reusable agent workflow for AI-powered test generation. Analyzes PR diffs, plans tests, and generates code that gets committed to your target repository.
 
-[![CI](https://github.com/ERaith/ai-test-agents-lab/actions/workflows/ci.yml/badge.svg)](https://github.com/ERaith/ai-test-agents-lab/actions/workflows/ci.yml)
+## Architecture
 
-## 🎯 Purpose
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  REPO A (Your Website/App)                                          │
+│                                                                     │
+│  1. Developer creates PR with feature code                          │
+│  2. Adds label "generate-tests"                                     │
+│  3. Workflow calls Repo B ─────────────────────────┐                │
+│                                                    │                │
+│  6. Tests committed to PR branch ◄─────────────────┤                │
+│  7. Developer reviews & merges                     │                │
+└────────────────────────────────────────────────────│────────────────┘
+                                                     │
+                                                     ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  REPO B (This Repo - Agent Workflow)                                │
+│                                                                     │
+│  4. Analyzes PR diff                                                │
+│  5. Runs agent pipeline:                                            │
+│     [Planner] → Test Plan → [Cases] → Gherkin → [Code] → Tests     │
+│                     ↓            ↓           ↓                      │
+│                  Review       Review      Review                    │
+│                                                                     │
+│  Optional: Saves context to S3 for cross-PR learning               │
+└─────────────────────────────────────────────────────────────────────┘
+```
 
-This repository demonstrates how to build an **agentic testing workflow** that:
-- Generates test plans from user stories using AI
-- Creates Gherkin scenarios from plans
-- Produces test automation code (Cypress)
-- Integrates with CI/CD via GitHub Actions
-- Includes human approval gates at each phase
+## Setup
 
-**Perfect for**: Learning about AI agents, preparing for interviews, or bootstrapping an enterprise testing workflow.
-
-## 🚀 Quick Start
-
-### Option 1: GitHub Actions (Recommended for Demo)
-
-1. Add `ANTHROPIC_API_KEY` to repository secrets
-2. Go to **Actions** → **"🎬 Demo Workflow"** → **Run workflow**
-3. Select a story and watch the magic!
-
-### Option 2: Local CLI
+### Step 1: Deploy This Repository (Repo B)
 
 ```bash
-npm install
-cp .env.example .env  # Add your ANTHROPIC_API_KEY
-npm run demo
+# Fork/clone to your organization
+git clone https://github.com/YOUR_ORG/ai-test-agents-lab.git
+
+# Push to your org
+cd ai-test-agents-lab
+git remote set-url origin https://github.com/YOUR_ORG/ai-test-agents-lab.git
+git push
 ```
 
-## 🏢 Enterprise PR Workflow
+**Add Secret** (Settings → Secrets → Actions):
+- `ANTHROPIC_API_KEY` - Get from console.anthropic.com
 
-The flagship feature: **phased test generation with human approval gates**.
+**Optional S3 Secrets** (for context persistence across PRs):
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
 
-```
-PR Created (story in description) + label: generate-tests
-    │
-    ▼
-┌─────────────────────────────────────────┐
-│  Phase 1: Generate Test Plan            │
-│  → Posts plan as PR comment             │
-│  → Label: awaiting-plan-approval        │
-│  ⏸️  BLOCKED                             │
-└─────────────────────────────────────────┘
-    │
-    │ Comment: /approve-plan
-    ▼
-┌─────────────────────────────────────────┐
-│  Phase 2: Generate Gherkin Scenarios    │
-│  → Posts scenarios as PR comment        │
-│  → Label: awaiting-cases-approval       │
-│  ⏸️  BLOCKED                             │
-└─────────────────────────────────────────┘
-    │
-    │ Comment: /approve-cases
-    ▼
-┌─────────────────────────────────────────┐
-│  Phase 3: Generate Test Code            │
-│  → Commits Cypress tests to PR branch   │
-│  → Label: tests-generated               │
-│  ✅ Ready for review & merge            │
-└─────────────────────────────────────────┘
-```
+**Optional Variables** (Settings → Variables → Actions):
+- `S3_BUCKET` - Bucket name for context storage
+- `AWS_REGION` - AWS region (default: us-east-1)
 
-**See [Enterprise PR Workflow Guide](docs/ENTERPRISE-PR-WORKFLOW.md) for details.**
+### Step 2: Configure Target Repository (Repo A)
 
-## 📚 Available Stories
-
-| Story | Description | Complexity |
-|-------|-------------|------------|
-| `story-001-delete-user` | Admin deletes a user | Simple (3 pts) |
-| `story-002-user-registration` | Full registration with email verification | Medium (5 pts) |
-| `story-003-shopping-cart` | E-commerce cart management | Medium (8 pts) |
-| `story-004-password-reset` | Secure password reset flow | Medium (5 pts) |
-| `story-005-product-search` | Search with filters/sorting | Complex (13 pts) |
-| `story-006-user-profile` | Profile editing, avatar, data export | Medium (8 pts) |
-| `story-007-checkout` | Full checkout with Stripe | Complex (21 pts) |
-
-## 🔧 Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     ORCHESTRATOR                            │
-│  Manages workflow state, sequencing, and human approvals    │
-└─────────────────────────────────────────────────────────────┘
-                              │
-          ┌───────────────────┼───────────────────┐
-          ▼                   ▼                   ▼
-┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
-│  PLANNER AGENT  │ │  CASE WORKER    │ │  CODE WORKER    │
-│                 │ │                 │ │                 │
-│ • Risk analysis │ │ • Gherkin       │ │ • Cypress tests │
-│ • Test strategy │ │ • Tagging       │ │ • Pattern match │
-│ • Prioritization│ │ • Grouping      │ │ • TODOs         │
-└─────────────────┘ └─────────────────┘ └─────────────────┘
-```
-
-## 🔄 GitHub Actions Workflows
-
-| Workflow | Trigger | Purpose |
-|----------|---------|---------|
-| **CI** | Push/PR | Validates code, runs simulation |
-| **Demo** | Manual | One-click interview demo |
-| **Phased Generation** | PR + label | Enterprise workflow with approval gates |
-
-## 🛠 CLI Commands
+Copy the workflow template:
 
 ```bash
-npm run demo                    # Interactive demo
-npm run agent:list              # List all stories
-npm run agent:full -- story-002 # Full workflow
-npm run agent:plan -- story-003 # Just planning phase
-npm run agent:cases -- story-003 # Just Gherkin phase
-npm run agent:code -- story-003 # Just code phase
+cd /path/to/your-website-repo
+
+# Copy workflow
+mkdir -p .github/workflows
+cp /path/to/ai-test-agents-lab/templates/target-repo/.github/workflows/generate-tests.yml .github/workflows/
+
+# Update organization name
+sed -i 's/YOUR_ORG/your-actual-org/g' .github/workflows/generate-tests.yml
 ```
 
-## 📂 Project Structure
+**Add secrets** to Repo A:
+- `ANTHROPIC_API_KEY` - Claude API key
+- `AWS_ACCESS_KEY_ID` - For S3 artifact storage
+- `AWS_SECRET_ACCESS_KEY` - For S3 artifact storage
+
+**Add variable** to Repo A:
+- `S3_BUCKET` - S3 bucket name for artifacts
+
+**Create labels** in Repo A:
+- `generate-tests` - triggers Phase 1
+- `approve-plan` - triggers Phase 2
+- `approve-cases` - triggers Phase 3
+- `tests-generated` - added automatically when complete
+
+### Step 3: Use It
+
+1. Create a PR in Repo A with your feature code
+2. Add a user story in the PR description
+3. Add label `generate-tests` → Phase 1 runs, generates test plan
+4. Review test plan → Add label `approve-plan` → Phase 2 runs
+5. Review scenarios → Add label `approve-cases` → Phase 3 runs
+6. `tests-generated` label added automatically
+7. Pull changes, review, and merge
+
+## Repository Structure
 
 ```
-ai-test-agents-lab/
-├── .github/workflows/          # GitHub Actions
-│   ├── ci.yml                  # Code validation
-│   ├── demo.yml                # Interview demo
-│   └── phased-generation.yml   # Enterprise PR workflow
+├── .github/workflows/
+│   ├── phased-generation.yml        # Main workflow with approval gates
+│   └── test-generation-reusable.yml # Reusable workflow (called by Repo A)
 ├── src/
-│   ├── agents/                 # AI agent implementations
-│   ├── orchestrator/           # Workflow orchestration
-│   ├── utils/                  # LLM client, file ops
-│   └── cli.ts                  # Command-line interface
-├── specs/                      # User stories (input)
-├── test-artifacts/             # Generated plans & scenarios
-├── cypress/                    # Generated test code
-└── docs/                       # Documentation
+│   ├── agents/          # Planner, CaseWorker, CodeWorker agents
+│   ├── orchestrator/    # Workflow state machine
+│   ├── context/         # Caching, registry, cross-story memory
+│   ├── storage/         # Local + S3 storage providers
+│   ├── analysis/        # PR diff analyzer
+│   ├── integrations/    # Jira integration (optional)
+│   ├── prompts/         # AI prompt templates
+│   └── utils/           # LLM client, file helpers
+├── templates/           # Workflow files to copy to Repo A
+└── docs/
+    ├── IMPLEMENTATION-GUIDE.md
+    └── DEPLOYMENT-CHECKLIST.md
 ```
 
-## 💰 Cost Estimates
+## What Gets Generated
 
-| Operation | Cost (Claude Sonnet) |
-|-----------|---------------------|
-| Full story (3 phases) | ~$0.03-0.05 |
+**Committed to PR (Repo A):**
+```
+playwright/tests/
+└── pr-123.spec.ts    # Generated Playwright test
+```
 
-## 🎤 Interview Talking Points
+**Stored in S3** (`{bucket}/{repo}/pr-{number}/{commit}/`):
+```
+artifacts/
+├── test-plan.md      # Test strategy
+├── scenarios.feature # Gherkin scenarios
+├── pr.diff           # PR diff for context
+└── test-code.spec.ts # Copy of generated test
+```
 
-1. **What is agentic testing?**
-   > AI agents that reason, plan, and execute—not just scripts
+**Cross-PR learning** (`{bucket}/{repo}/memory/`):
+- Patterns from previous PRs improve future generations
 
-2. **How do you trust AI-generated tests?**
-   > Human-in-the-loop: approval gates at each phase, full audit trail
-
-3. **How does it integrate with existing workflows?**
-   > PR-based: story in PR description, tests committed to PR branch
-
-4. **Enterprise considerations?**
-   > Phased approvals, audit trail in PR comments, cost management
-
-## 📖 Documentation
+## Documentation
 
 | Document | Description |
 |----------|-------------|
-| [Enterprise PR Workflow](docs/ENTERPRISE-PR-WORKFLOW.md) | **Phased workflow with approval gates** |
-| [Agentic Testing Guide](docs/AGENTIC-TESTING-GUIDE.md) | Architecture deep-dive |
-| [Interview Quick Reference](docs/INTERVIEW-QUICK-REFERENCE.md) | One-page cheat sheet |
-| [GitHub Actions Setup](docs/GITHUB-ACTIONS-SETUP.md) | CI/CD configuration |
+| [Implementation Guide](docs/IMPLEMENTATION-GUIDE.md) | Detailed setup instructions |
+| [Deployment Checklist](docs/DEPLOYMENT-CHECKLIST.md) | Step-by-step verification |
 
-## 📜 License
+## Cost
+
+~$0.03-0.05 per PR using Claude Sonnet
+
+## License
 
 MIT

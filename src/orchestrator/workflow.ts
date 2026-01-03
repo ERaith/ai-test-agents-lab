@@ -1,18 +1,14 @@
 /**
  * Workflow Orchestrator
- * 
- * LEARNING NOTE: The orchestrator is the "brain" that coordinates agents.
+ *
+ * The orchestrator is the "brain" that coordinates agents.
  * Key responsibilities:
  * - Workflow state management
  * - Agent sequencing
  * - Human approval gates
  * - Error handling and recovery
  * - Artifact persistence
- * 
- * INTERVIEW POINT: "Our orchestrator implements a state machine pattern.
- * Each phase has clear inputs, outputs, and transition rules. Human approval
- * gates are built-in, making the workflow auditable and trustworthy.
- * The state is persisted, so we can resume from failures."
+ * - Cross-story memory integration
  */
 
 import {
@@ -24,9 +20,28 @@ import {
   SystemContext,
 } from '../types.js';
 import { PlannerAgent, CaseWorkerAgent, CodeWorkerAgent } from '../agents/index.js';
-import { loadSystemContext } from '../utils/context.js';
-import { readFile, writeFile, fileExists, getArtifactPath } from '../utils/files.js';
+import {
+  readFile,
+  writeFile,
+  fileExists,
+  getArtifactPath,
+  getTestPath,
+  getHelpersPath,
+  findExampleTests,
+} from '../utils/files.js';
 import { createLLMClient } from '../utils/llm.js';
+
+// Context system imports
+import {
+  CachingContextLoader,
+  DefaultContextRegistry,
+  FileMemoryStore,
+  createWorkflowMemory,
+  buildMemoryContext,
+  formatMemoryForPrompt,
+  StorageProvider,
+} from '../context/index.js';
+import { LocalStorageProvider } from '../storage/index.js';
 
 const DEFAULT_CONFIG: OrchestratorConfig = {
   humanApprovalRequired: true,
@@ -41,9 +56,21 @@ export class WorkflowOrchestrator {
   private approvalCallback: ApprovalCallback | null = null;
   private verbose: boolean;
 
+  // Context management
+  private storage: StorageProvider;
+  private contextLoader: CachingContextLoader;
+  private registry: DefaultContextRegistry;
+  private memoryStore: FileMemoryStore;
+
   constructor(config: Partial<OrchestratorConfig> = {}, verbose = false) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.verbose = verbose;
+
+    // Initialize context management
+    this.storage = new LocalStorageProvider();
+    this.contextLoader = new CachingContextLoader(this.storage);
+    this.registry = new DefaultContextRegistry(this.storage);
+    this.memoryStore = new FileMemoryStore(this.storage);
   }
 
   /**
@@ -62,7 +89,13 @@ export class WorkflowOrchestrator {
     const state = this.createInitialState(storyId);
 
     try {
-      this.context = await loadSystemContext();
+      // Load context with caching
+      this.context = await this.contextLoader.load();
+
+      // Register system context
+      this.registry.register('system', 'main', this.context, {
+        source: 'src/prompts/system-context.md',
+      });
 
       await this.loadStory(state);
       await this.generatePlan(state);
@@ -86,6 +119,9 @@ export class WorkflowOrchestrator {
       this.transitionTo(state, 'completed');
       this.log(`✅ Workflow completed for ${storyId}`);
 
+      // Save to memory for cross-story learning
+      await this.saveToMemory(state);
+
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       state.metadata.error = message;
@@ -102,9 +138,9 @@ export class WorkflowOrchestrator {
    */
   async runPlanningOnly(storyId: string): Promise<WorkflowState> {
     this.log(`Running planning only for ${storyId}`);
-    
+
     const state = this.createInitialState(storyId);
-    this.context = await loadSystemContext();
+    this.context = await this.contextLoader.load();
 
     await this.loadStory(state);
     await this.generatePlan(state);
@@ -117,9 +153,9 @@ export class WorkflowOrchestrator {
    */
   async runCasesOnly(storyId: string): Promise<WorkflowState> {
     this.log(`Running case generation only for ${storyId}`);
-    
+
     const state = this.createInitialState(storyId);
-    this.context = await loadSystemContext();
+    this.context = await this.contextLoader.load();
 
     await this.loadStory(state);
     await this.loadExistingPlan(state);
@@ -133,9 +169,9 @@ export class WorkflowOrchestrator {
    */
   async runCodeOnly(storyId: string): Promise<WorkflowState> {
     this.log(`Running code generation only for ${storyId}`);
-    
+
     const state = this.createInitialState(storyId);
-    this.context = await loadSystemContext();
+    this.context = await this.contextLoader.load();
 
     await this.loadStory(state);
     await this.loadExistingPlan(state);
@@ -143,6 +179,22 @@ export class WorkflowOrchestrator {
     await this.generateCode(state);
 
     return state;
+  }
+
+  /**
+   * Invalidate cached context (call when system-context.md changes)
+   */
+  invalidateContext(): void {
+    this.contextLoader.invalidate();
+    this.registry.invalidate('system');
+    this.log('Context cache invalidated');
+  }
+
+  /**
+   * Get memory statistics
+   */
+  async getMemoryStats() {
+    return this.memoryStore.getStats();
   }
 
   // ============================================================================
@@ -182,34 +234,55 @@ export class WorkflowOrchestrator {
 
   private async loadStory(state: WorkflowState): Promise<void> {
     const storyPath = `specs/${state.storyId}.md`;
-    
+
     if (!await fileExists(storyPath)) {
       throw new Error(`Story not found: ${storyPath}`);
     }
 
     state.artifacts.story = await readFile(storyPath);
+
+    // Register story context
+    this.registry.register('story', state.storyId, state.artifacts.story, {
+      source: storyPath,
+      storyId: state.storyId,
+    });
+
     this.log(`Loaded story: ${storyPath}`);
   }
 
   private async loadExistingPlan(state: WorkflowState): Promise<void> {
     const planPath = getArtifactPath(state.storyId, 'test-plan.md');
-    
+
     if (!await fileExists(planPath)) {
       throw new Error(`Test plan not found: ${planPath}. Run planning first.`);
     }
 
     state.artifacts.testPlan = await readFile(planPath);
+
+    // Register artifact
+    this.registry.register('artifact', `${state.storyId}-plan`, state.artifacts.testPlan, {
+      source: planPath,
+      storyId: state.storyId,
+    });
+
     this.log(`Loaded existing plan: ${planPath}`);
   }
 
   private async loadExistingScenarios(state: WorkflowState): Promise<void> {
     const scenariosPath = getArtifactPath(state.storyId, 'scenarios.feature');
-    
+
     if (!await fileExists(scenariosPath)) {
       throw new Error(`Scenarios not found: ${scenariosPath}. Run case generation first.`);
     }
 
     state.artifacts.gherkinScenarios = await readFile(scenariosPath);
+
+    // Register artifact
+    this.registry.register('artifact', `${state.storyId}-scenarios`, state.artifacts.gherkinScenarios, {
+      source: scenariosPath,
+      storyId: state.storyId,
+    });
+
     this.log(`Loaded existing scenarios: ${scenariosPath}`);
   }
 
@@ -223,12 +296,24 @@ export class WorkflowOrchestrator {
     const llm = createLLMClient();
     const planner = new PlannerAgent(llm, this.verbose);
 
+    // Get memory context for cross-story learning
+    const memoryContext = await this.getMemoryContext(state.artifacts.story);
+    const memoryPrompt = formatMemoryForPrompt(memoryContext);
+
+    // Build payload with memory context
+    const payload: any = {
+      story: state.artifacts.story,
+      storyId: state.storyId,
+    };
+
+    // Add memory context as existing patterns if available
+    if (memoryPrompt) {
+      payload.existingTestPatterns = memoryPrompt;
+    }
+
     const result = await planner.execute({
       context: this.context,
-      payload: {
-        story: state.artifacts.story,
-        storyId: state.storyId,
-      },
+      payload,
     });
 
     if (!result.success || !result.result) {
@@ -240,6 +325,12 @@ export class WorkflowOrchestrator {
     // Save artifact
     const planPath = getArtifactPath(state.storyId, 'test-plan.md');
     await writeFile(planPath, result.result);
+
+    // Register artifact
+    this.registry.register('artifact', `${state.storyId}-plan`, result.result, {
+      source: planPath,
+      storyId: state.storyId,
+    });
   }
 
   private async generateCases(state: WorkflowState): Promise<void> {
@@ -270,6 +361,12 @@ export class WorkflowOrchestrator {
     // Save artifact
     const scenariosPath = getArtifactPath(state.storyId, 'scenarios.feature');
     await writeFile(scenariosPath, result.result);
+
+    // Register artifact
+    this.registry.register('artifact', `${state.storyId}-scenarios`, result.result, {
+      source: scenariosPath,
+      storyId: state.storyId,
+    });
   }
 
   private async generateCode(state: WorkflowState): Promise<void> {
@@ -282,12 +379,12 @@ export class WorkflowOrchestrator {
     const llm = createLLMClient();
     const codeWorker = new CodeWorkerAgent(llm, this.verbose);
 
-    // Try to load example tests and helpers
+    // Load example tests and helpers based on configured framework
     let exampleTests = '';
     let helpers = '';
 
     try {
-      const testFiles = await this.findExampleTests();
+      const testFiles = await findExampleTests(1);
       if (testFiles.length > 0) {
         exampleTests = await readFile(testFiles[0]);
       }
@@ -296,7 +393,8 @@ export class WorkflowOrchestrator {
     }
 
     try {
-      helpers = await readFile('cypress/support/commands.ts');
+      const helpersPath = getHelpersPath();
+      helpers = await readFile(helpersPath);
     } catch {
       // No helpers available
     }
@@ -317,15 +415,67 @@ export class WorkflowOrchestrator {
 
     state.artifacts.testCode = result.result;
 
-    // Save artifact
-    const codePath = `cypress/e2e/${state.storyId}.cy.ts`;
+    // Save artifact using framework-appropriate path
+    const codePath = getTestPath(state.storyId);
     await writeFile(codePath, result.result);
+
+    // Register artifact
+    this.registry.register('artifact', `${state.storyId}-code`, result.result, {
+      source: codePath,
+      storyId: state.storyId,
+    });
   }
 
-  private async findExampleTests(): Promise<string[]> {
-    // This would scan for existing test files to use as examples
-    // For now, return empty
-    return [];
+  private async getMemoryContext(storyContent: string) {
+    try {
+      const matches = await this.memoryStore.getSimilar(storyContent, 3);
+      return buildMemoryContext(matches);
+    } catch {
+      return { relatedStories: [], commonPatterns: [], recommendations: [] };
+    }
+  }
+
+  private async saveToMemory(state: WorkflowState): Promise<void> {
+    try {
+      // Extract title from story (first heading or first line)
+      const story = state.artifacts.story || '';
+      const titleMatch = story.match(/^#\s+(.+)$/m) || story.match(/^(.+)$/m);
+      const title = titleMatch ? titleMatch[1].trim() : state.storyId;
+
+      // Extract tags from scenarios
+      const scenarios = state.artifacts.gherkinScenarios || '';
+      const tags = [...new Set(scenarios.match(/@[\w-]+/g) || [])];
+
+      // Determine test types from plan
+      const plan = state.artifacts.testPlan || '';
+      const testTypes: string[] = [];
+      if (plan.includes('E2E') || plan.includes('e2e')) testTypes.push('e2e');
+      if (plan.includes('API') || plan.includes('api')) testTypes.push('api');
+      if (plan.includes('Unit') || plan.includes('unit')) testTypes.push('unit');
+      if (testTypes.length === 0) testTypes.push('e2e'); // Default
+
+      // Extract patterns from plan (section headers as patterns)
+      const patterns = (plan.match(/^##\s+(.+)$/gm) || [])
+        .map(p => p.replace(/^##\s+/, '').trim())
+        .slice(0, 5);
+
+      const memory = createWorkflowMemory(state.storyId, title, story, {
+        tags,
+        testTypes,
+        patterns,
+        outcome: state.phase === 'completed' ? 'success' : 'failed',
+        artifactPaths: {
+          testPlan: getArtifactPath(state.storyId, 'test-plan.md'),
+          scenarios: getArtifactPath(state.storyId, 'scenarios.feature'),
+          testCode: getTestPath(state.storyId),
+        },
+      });
+
+      await this.memoryStore.save(memory);
+      this.log(`Saved workflow to memory: ${state.storyId}`);
+    } catch (error) {
+      this.log(`Warning: Failed to save to memory: ${error}`, 'error');
+    }
   }
 
   private async requestApproval(state: WorkflowState, phase: WorkflowPhase): Promise<void> {
