@@ -7,6 +7,7 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { config } from '../config/index.js';
 
 const PROJECT_ROOT = process.cwd();
 
@@ -20,8 +21,6 @@ export type TestFramework = 'playwright' | 'cypress';
  * Get the configured test framework from config
  */
 export function getTestFramework(): TestFramework {
-  // Import config inline to avoid circular dependency
-  const { config } = require('../config/index.js');
   return config.testFramework;
 }
 

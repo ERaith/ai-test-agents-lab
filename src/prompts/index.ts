@@ -5,10 +5,11 @@
  * Each module provides versioned, testable prompts for agents.
  */
 
-// Base utilities
+// Base utilities - types
+export type { PromptMetadata, BuiltPrompt } from './base.js';
+
+// Base utilities - values
 export {
-  PromptMetadata,
-  BuiltPrompt,
   SHARED_RULES,
   getSharedRules,
   formatContext,

@@ -1,17 +1,19 @@
 /**
  * LLM Client Abstraction
- * 
+ *
  * LEARNING NOTE: Abstract the LLM provider to allow easy switching between
  * providers (Claude, OpenAI, local models). This is crucial for enterprise
  * because you might need to:
  * - Use different models for different tasks (cost optimization)
  * - Switch providers based on availability
  * - Use local models for sensitive data
- * 
+ *
  * INTERVIEW POINT: "We use a provider-agnostic interface so we can optimize
  * cost by using smaller models for simple tasks, and we can easily switch
  * to local models when dealing with sensitive customer data."
  */
+
+import { config } from '../config/index.js';
 
 export interface LLMMessage {
   role: 'system' | 'user' | 'assistant';
@@ -339,9 +341,6 @@ describe('${storyId} – Feature Under Test', () => {
  * Create a configured LLM client from environment
  */
 export function createLLMClient(verbose = false): LLMClient {
-  // Import config inline to avoid circular dependency
-  const { config } = require('../config/index.js');
-
   if (config.llm.provider === 'anthropic' && config.llm.anthropicKey) {
     console.log('🔑 Using Anthropic API');
     return new LLMClient({
