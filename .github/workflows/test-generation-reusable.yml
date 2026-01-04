@@ -284,9 +284,11 @@ jobs:
           npx tsx src/cli.ts plan ${{ inputs.story_id }} $SKIP_FLAG
 
           if [ -f "test-artifacts/${{ inputs.story_id }}/test-plan.md" ]; then
-            echo "content<<EOF" >> $GITHUB_OUTPUT
+            # Use unique delimiter to avoid conflicts with file content
+            DELIM="GHOUTPUT_$(date +%s)"
+            echo "content<<${DELIM}" >> $GITHUB_OUTPUT
             cat "test-artifacts/${{ inputs.story_id }}/test-plan.md" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
+            echo "${DELIM}" >> $GITHUB_OUTPUT
           fi
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -315,9 +317,11 @@ jobs:
           npx tsx src/cli.ts cases ${{ inputs.story_id }} $SKIP_FLAG
 
           if [ -f "test-artifacts/${{ inputs.story_id }}/scenarios.feature" ]; then
-            echo "content<<EOF" >> $GITHUB_OUTPUT
+            # Use unique delimiter to avoid conflicts with file content
+            DELIM="GHOUTPUT_$(date +%s)"
+            echo "content<<${DELIM}" >> $GITHUB_OUTPUT
             cat "test-artifacts/${{ inputs.story_id }}/scenarios.feature" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
+            echo "${DELIM}" >> $GITHUB_OUTPUT
           fi
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -353,9 +357,11 @@ jobs:
 
           TEST_FILE=$(find $TEST_DIR -name "*${{ inputs.story_id }}*" -type f 2>/dev/null | head -1)
           if [ -n "$TEST_FILE" ]; then
-            echo "content<<EOF" >> $GITHUB_OUTPUT
+            # Use unique delimiter to avoid conflicts with file content
+            DELIM="GHOUTPUT_$(date +%s)"
+            echo "content<<${DELIM}" >> $GITHUB_OUTPUT
             cat "$TEST_FILE" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
+            echo "${DELIM}" >> $GITHUB_OUTPUT
           fi
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
