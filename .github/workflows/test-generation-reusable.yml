@@ -1,13 +1,9 @@
-# ============================================================================
+# ==============================================================================
 # REUSABLE TEST GENERATION WORKFLOW
-# ============================================================================
+# ==============================================================================
 #
 # Central workflow that can be called from other repositories.
-# Provides AI-powered test generation with:
-# - PR diff analysis for context
-# - S3-based context persistence across PRs
-# - Playwright test output
-# - Cross-story memory and learning
+# Logic lives in scripts/ci/ - this file is just wiring.
 #
 # Usage from other repositories:
 #
@@ -15,90 +11,71 @@
 #     generate-tests:
 #       uses: owner/ai-test-agents-lab/.github/workflows/test-generation-reusable.yml@main
 #       with:
-#         phase: 'plan'  # or 'cases', 'code', 'full'
+#         phase: 'plan'
 #         story_id: 'pr-123'
 #       secrets:
 #         ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-#         AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-#         AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
 #
-# ============================================================================
+# ==============================================================================
 
 name: Test Generation (Reusable)
 
 on:
   workflow_call:
     inputs:
-      # Phase to run: plan, cases, code, or full (all phases)
       phase:
         description: 'Phase to run: plan, cases, code, or full'
         required: true
         type: string
         default: 'plan'
 
-      # Story identifier (e.g., 'pr-123' or 'JIRA-456')
       story_id:
         description: 'Story identifier'
         required: true
         type: string
 
-      # Story content (PR body, Jira description, etc.)
       story_content:
         description: 'Story content in markdown'
         required: false
         type: string
         default: ''
 
-      # PR diff content for context analysis
-      diff_content:
-        description: 'Git diff content for analysis'
-        required: false
-        type: string
-        default: ''
-
-      # Test framework: playwright or cypress
       test_framework:
-        description: 'Test framework to use'
+        description: 'Test framework: playwright or cypress'
         required: false
         type: string
         default: 'playwright'
 
-      # S3 bucket for context persistence
       s3_bucket:
         description: 'S3 bucket for context storage'
         required: false
         type: string
         default: ''
 
-      # S3 prefix for repository scoping
       s3_prefix:
         description: 'S3 prefix (defaults to repository name)'
         required: false
         type: string
         default: ''
 
-      # Skip approval gates (for CI/automation)
       skip_approval:
         description: 'Skip human approval gates'
         required: false
         type: boolean
         default: true
 
-      # Node.js version
       node_version:
         description: 'Node.js version'
         required: false
         type: string
         default: '20'
 
-      # AWS region
       aws_region:
         description: 'AWS region for S3'
         required: false
         type: string
         default: 'us-east-1'
 
-      # Caller repository context (for comments/labels/commits)
       caller_repo:
         description: 'Caller repository (owner/repo)'
         required: false
@@ -147,9 +124,6 @@ on:
       test_code:
         description: 'Generated test code (Phase 3)'
         value: ${{ jobs.generate.outputs.test_code }}
-      analysis:
-        description: 'PR diff analysis results'
-        value: ${{ jobs.generate.outputs.analysis }}
 
 jobs:
   generate:
@@ -160,7 +134,6 @@ jobs:
       test_plan: ${{ steps.plan.outputs.content }}
       scenarios: ${{ steps.cases.outputs.content }}
       test_code: ${{ steps.code.outputs.content }}
-      analysis: ${{ steps.analyze.outputs.content }}
 
     steps:
       - name: Checkout ai-test-agents-lab
@@ -195,210 +168,53 @@ jobs:
       - name: Setup story file
         id: setup
         working-directory: ai-test-agents
-        run: |
-          mkdir -p specs
+        run: ./scripts/ci/setup-story.sh "${{ inputs.story_id }}"
+        env:
+          STORY_CONTENT: ${{ inputs.story_content }}
 
-          if [ -n "${{ inputs.story_content }}" ]; then
-            echo '${{ inputs.story_content }}' > "specs/${{ inputs.story_id }}.md"
-          else
-            echo "# ${{ inputs.story_id }}" > "specs/${{ inputs.story_id }}.md"
-            echo "" >> "specs/${{ inputs.story_id }}.md"
-            echo "Story content not provided." >> "specs/${{ inputs.story_id }}.md"
-          fi
-
-          echo "story_path=specs/${{ inputs.story_id }}.md" >> $GITHUB_OUTPUT
-
-      - name: Analyze PR diff
-        id: analyze
-        if: inputs.diff_content != ''
-        working-directory: ai-test-agents
-        run: |
-          # Save diff to file
-          echo '${{ inputs.diff_content }}' > /tmp/pr.diff
-
-          # Run diff analysis
-          npx tsx -e "
-            import { DiffAnalyzer, formatAnalysisAsMarkdown } from './src/analysis/index.js';
-            import * as fs from 'fs';
-
-            const diff = fs.readFileSync('/tmp/pr.diff', 'utf8');
-            const analyzer = new DiffAnalyzer();
-            const analysis = await analyzer.analyzeDiff(diff);
-
-            // Save analysis results
-            fs.mkdirSync('test-artifacts/${{ inputs.story_id }}', { recursive: true });
-            fs.writeFileSync('test-artifacts/${{ inputs.story_id }}/diff-analysis.json', JSON.stringify(analysis, null, 2));
-            fs.writeFileSync('test-artifacts/${{ inputs.story_id }}/diff-analysis.md', formatAnalysisAsMarkdown(analysis));
-
-            console.log('Analysis complete');
-            console.log('Changed files:', analysis.changedFiles.length);
-            console.log('Related files:', analysis.relatedFiles.length);
-            console.log('Suggested test types:', analysis.suggestedTestTypes.join(', '));
-          "
-
-          if [ -f "test-artifacts/${{ inputs.story_id }}/diff-analysis.md" ]; then
-            echo "content<<EOF" >> $GITHUB_OUTPUT
-            cat "test-artifacts/${{ inputs.story_id }}/diff-analysis.md" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Load context from S3
+      - name: Download context from S3
         if: inputs.s3_bucket != ''
         working-directory: ai-test-agents
-        run: |
-          S3_PREFIX="${{ inputs.s3_prefix }}"
-          if [ -z "$S3_PREFIX" ]; then
-            S3_PREFIX="${{ github.repository }}"
-          fi
-
-          # Try to download existing context and memory
-          aws s3 sync "s3://${{ inputs.s3_bucket }}/${S3_PREFIX}/context/" "./context/" --quiet || true
-          aws s3 sync "s3://${{ inputs.s3_bucket }}/${S3_PREFIX}/memory/" "./memory/" --quiet || true
-
-          # For phases 2 and 3, also download previously generated artifacts
-          if [ "${{ inputs.phase }}" = "cases" ] || [ "${{ inputs.phase }}" = "code" ]; then
-            echo "Downloading artifacts from previous phases..."
-            mkdir -p "test-artifacts/${{ inputs.story_id }}"
-            aws s3 sync "s3://${{ inputs.s3_bucket }}/${S3_PREFIX}/artifacts/${{ inputs.story_id }}/" \
-              "./test-artifacts/${{ inputs.story_id }}/" --quiet || true
-            echo "Downloaded artifacts:"
-            ls -la "test-artifacts/${{ inputs.story_id }}/" 2>/dev/null || echo "No artifacts found"
-          fi
-
-          echo "Loaded context from S3"
-          ls -la context/ 2>/dev/null || echo "No context directory"
-          ls -la memory/ 2>/dev/null || echo "No memory directory"
+        run: ./scripts/ci/sync-s3.sh download "${{ inputs.story_id }}" "${{ inputs.phase }}"
         env:
+          S3_BUCKET: ${{ inputs.s3_bucket }}
+          S3_PREFIX: ${{ inputs.s3_prefix || github.repository }}
           AWS_REGION: ${{ inputs.aws_region }}
 
       - name: Generate test plan (Phase 1)
         id: plan
         if: inputs.phase == 'plan' || inputs.phase == 'full'
         working-directory: ai-test-agents
-        run: |
-          SKIP_FLAG=""
-          if [ "${{ inputs.skip_approval }}" = "true" ]; then
-            SKIP_FLAG="--skip-approval"
-          fi
-
-          npx tsx src/cli.ts plan ${{ inputs.story_id }} $SKIP_FLAG
-
-          if [ -f "test-artifacts/${{ inputs.story_id }}/test-plan.md" ]; then
-            # Use unique delimiter and ensure file ends with newline
-            DELIM="GHOUTPUT_PLAN_$(date +%s)_END"
-            {
-              echo "content<<${DELIM}"
-              cat "test-artifacts/${{ inputs.story_id }}/test-plan.md"
-              echo ""
-              echo "${DELIM}"
-            } >> $GITHUB_OUTPUT
-          fi
+        run: ./scripts/ci/run-phase.sh plan "${{ inputs.story_id }}" ${{ inputs.skip_approval && '--skip-approval' || '' }}
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           TEST_FRAMEWORK: ${{ inputs.test_framework }}
-          STORAGE_PROVIDER: ${{ inputs.s3_bucket != '' && 's3' || 'local' }}
-          S3_BUCKET: ${{ inputs.s3_bucket }}
-          S3_PREFIX: ${{ inputs.s3_prefix || github.repository }}
-          AWS_REGION: ${{ inputs.aws_region }}
 
       - name: Generate test cases (Phase 2)
         id: cases
         if: inputs.phase == 'cases' || inputs.phase == 'full'
         working-directory: ai-test-agents
-        run: |
-          # Verify test plan exists
-          if [ ! -f "test-artifacts/${{ inputs.story_id }}/test-plan.md" ]; then
-            echo "Test plan not found - run plan phase first"
-            exit 1
-          fi
-
-          SKIP_FLAG=""
-          if [ "${{ inputs.skip_approval }}" = "true" ]; then
-            SKIP_FLAG="--skip-approval"
-          fi
-
-          npx tsx src/cli.ts cases ${{ inputs.story_id }} $SKIP_FLAG
-
-          if [ -f "test-artifacts/${{ inputs.story_id }}/scenarios.feature" ]; then
-            # Use unique delimiter and ensure file ends with newline
-            DELIM="GHOUTPUT_CASES_$(date +%s)_END"
-            {
-              echo "content<<${DELIM}"
-              cat "test-artifacts/${{ inputs.story_id }}/scenarios.feature"
-              echo ""
-              echo "${DELIM}"
-            } >> $GITHUB_OUTPUT
-          fi
+        run: ./scripts/ci/run-phase.sh cases "${{ inputs.story_id }}" ${{ inputs.skip_approval && '--skip-approval' || '' }}
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           TEST_FRAMEWORK: ${{ inputs.test_framework }}
-          STORAGE_PROVIDER: ${{ inputs.s3_bucket != '' && 's3' || 'local' }}
-          S3_BUCKET: ${{ inputs.s3_bucket }}
-          S3_PREFIX: ${{ inputs.s3_prefix || github.repository }}
-          AWS_REGION: ${{ inputs.aws_region }}
 
       - name: Generate test code (Phase 3)
         id: code
         if: inputs.phase == 'code' || inputs.phase == 'full'
         working-directory: ai-test-agents
-        run: |
-          # Verify scenarios exist
-          if [ ! -f "test-artifacts/${{ inputs.story_id }}/scenarios.feature" ]; then
-            echo "Scenarios not found - run cases phase first"
-            exit 1
-          fi
-
-          SKIP_FLAG=""
-          if [ "${{ inputs.skip_approval }}" = "true" ]; then
-            SKIP_FLAG="--skip-approval"
-          fi
-
-          npx tsx src/cli.ts code ${{ inputs.story_id }} $SKIP_FLAG
-
-          # Find the generated test file
-          TEST_DIR="playwright/tests"
-          if [ "${{ inputs.test_framework }}" = "cypress" ]; then
-            TEST_DIR="cypress/e2e"
-          fi
-
-          TEST_FILE=$(find $TEST_DIR -name "*${{ inputs.story_id }}*" -type f 2>/dev/null | head -1)
-          if [ -n "$TEST_FILE" ]; then
-            # Use unique delimiter and ensure file ends with newline
-            DELIM="GHOUTPUT_CODE_$(date +%s)_END"
-            {
-              echo "content<<${DELIM}"
-              cat "$TEST_FILE"
-              echo ""
-              echo "${DELIM}"
-            } >> $GITHUB_OUTPUT
-          fi
+        run: ./scripts/ci/run-phase.sh code "${{ inputs.story_id }}" ${{ inputs.skip_approval && '--skip-approval' || '' }}
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           TEST_FRAMEWORK: ${{ inputs.test_framework }}
-          STORAGE_PROVIDER: ${{ inputs.s3_bucket != '' && 's3' || 'local' }}
-          S3_BUCKET: ${{ inputs.s3_bucket }}
-          S3_PREFIX: ${{ inputs.s3_prefix || github.repository }}
-          AWS_REGION: ${{ inputs.aws_region }}
 
-      - name: Save context to S3
+      - name: Upload context to S3
         if: inputs.s3_bucket != '' && always()
         working-directory: ai-test-agents
-        run: |
-          S3_PREFIX="${{ inputs.s3_prefix }}"
-          if [ -z "$S3_PREFIX" ]; then
-            S3_PREFIX="${{ github.repository }}"
-          fi
-
-          # Upload context and memory
-          aws s3 sync "./context/" "s3://${{ inputs.s3_bucket }}/${S3_PREFIX}/context/" --quiet || true
-          aws s3 sync "./memory/" "s3://${{ inputs.s3_bucket }}/${S3_PREFIX}/memory/" --quiet || true
-
-          # Upload artifacts for this story
-          aws s3 sync "./test-artifacts/${{ inputs.story_id }}/" \
-            "s3://${{ inputs.s3_bucket }}/${S3_PREFIX}/artifacts/${{ inputs.story_id }}/" --quiet || true
-
-          echo "Saved context to S3"
+        run: ./scripts/ci/sync-s3.sh upload "${{ inputs.story_id }}"
         env:
+          S3_BUCKET: ${{ inputs.s3_bucket }}
+          S3_PREFIX: ${{ inputs.s3_prefix || github.repository }}
           AWS_REGION: ${{ inputs.aws_region }}
 
       - name: Upload artifacts
@@ -411,9 +227,9 @@ jobs:
             ai-test-agents/cypress/e2e/
           if-no-files-found: ignore
 
-  # ============================================================================
+  # ==============================================================================
   # Post-generation: Handle PR comments, labels, and commits
-  # ============================================================================
+  # ==============================================================================
   post-generate:
     name: Update PR
     needs: generate
@@ -421,9 +237,27 @@ jobs:
     if: inputs.caller_repo != '' && inputs.pr_number != 0
 
     steps:
-      - name: Post comment and update labels
-        uses: actions/github-script@v7
+      - name: Checkout ai-test-agents-lab
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/ai-test-agents-lab
+          path: ai-test-agents
+          ref: main
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node_version }}
+
+      - name: Install dependencies
+        working-directory: ai-test-agents
+        run: npm ci
+
+      - name: Post PR comment
+        working-directory: ai-test-agents
+        run: npx tsx scripts/ci/post-pr-comment.ts
         env:
+          GITHUB_TOKEN: ${{ secrets.CALLER_GITHUB_TOKEN }}
           CALLER_REPO: ${{ inputs.caller_repo }}
           PR_NUMBER: ${{ inputs.pr_number }}
           PHASE: ${{ inputs.phase }}
@@ -431,104 +265,7 @@ jobs:
           TEST_PLAN: ${{ needs.generate.outputs.test_plan }}
           SCENARIOS: ${{ needs.generate.outputs.scenarios }}
           TEST_CODE: ${{ needs.generate.outputs.test_code }}
-        with:
-          github-token: ${{ secrets.CALLER_GITHUB_TOKEN }}
-          script: |
-            const callerRepo = process.env.CALLER_REPO || '';
-            const [owner, repo] = callerRepo.split('/');
-            const prNumber = Number(process.env.PR_NUMBER || '0');
-            const phase = String(process.env.PHASE || '');
-            const triggerLabel = String(process.env.TRIGGER_LABEL || '');
 
-            const testPlan = process.env.TEST_PLAN || '';
-            const scenarios = process.env.SCENARIOS || '';
-            const testCode = process.env.TEST_CODE || '';
-
-            let bodyLines = [];
-            let completionLabel = '';
-
-            if (phase === 'plan') {
-              const content = testPlan.length > 60000 ? testPlan.slice(0, 60000) + '\n...(truncated)' : testPlan;
-              bodyLines = [
-                '## 📝 Phase 1: Test Plan',
-                '',
-                '<details>',
-                '<summary>Click to expand</summary>',
-                '',
-                content,
-                '',
-                '</details>',
-                '',
-                '---',
-                '**Next:** Add label `approve-plan` to continue to Phase 2'
-              ];
-            } else if (phase === 'cases') {
-              const content = scenarios.length > 60000 ? scenarios.slice(0, 60000) + '\n...(truncated)' : scenarios;
-              bodyLines = [
-                '## 🥒 Phase 2: Gherkin Scenarios',
-                '',
-                '<details>',
-                '<summary>Click to expand</summary>',
-                '',
-                '~~~gherkin',
-                content,
-                '~~~',
-                '',
-                '</details>',
-                '',
-                '---',
-                '**Next:** Add label `approve-cases` to continue to Phase 3'
-              ];
-            } else if (phase === 'code') {
-              const preview = (testCode || '').split('\n').slice(0, 50).join('\n');
-              bodyLines = [
-                '## 💻 Phase 3: Test Code',
-                '',
-                '✅ **All phases complete!** Test code committed to this PR.',
-                '',
-                '<details>',
-                '<summary>Click to expand code</summary>',
-                '',
-                '~~~typescript',
-                preview,
-                '~~~',
-                '',
-                '</details>',
-                '',
-                '**Next:** Pull changes, review, and merge!'
-              ];
-              completionLabel = 'tests-generated';
-            }
-
-            // Post comment
-            if (owner && repo && prNumber && bodyLines.length) {
-              await github.rest.issues.createComment({
-                owner,
-                repo,
-                issue_number: prNumber,
-                body: bodyLines.join('\n')
-              });
-            }
-
-            // Remove trigger label
-            if (owner && repo && prNumber && triggerLabel) {
-              await github.rest.issues.removeLabel({
-                owner,
-                repo,
-                issue_number: prNumber,
-                name: triggerLabel
-              }).catch(() => {});
-            }
-
-            // Add completion label for phase 3
-            if (owner && repo && prNumber && completionLabel) {
-              await github.rest.issues.addLabels({
-                owner,
-                repo,
-                issue_number: prNumber,
-                labels: [completionLabel]
-              });
-            }
       - name: Download test artifacts (Phase 3 only)
         if: inputs.phase == 'code' && inputs.pr_head_ref != ''
         uses: actions/download-artifact@v4
@@ -536,7 +273,7 @@ jobs:
           name: test-artifacts-${{ inputs.story_id }}
           path: ./artifacts
 
-      - name: Checkout caller repo for commit (Phase 3 only)
+      - name: Checkout caller repo (Phase 3 only)
         if: inputs.phase == 'code' && inputs.pr_head_ref != ''
         uses: actions/checkout@v4
         with:
@@ -547,21 +284,6 @@ jobs:
 
       - name: Commit test files (Phase 3 only)
         if: inputs.phase == 'code' && inputs.pr_head_ref != ''
-        run: |
-          cd caller-repo
-          mkdir -p playwright/tests
-
-          # Copy test files from downloaded artifacts
-          find ../artifacts -name "*.spec.ts" -exec cp {} playwright/tests/ \; 2>/dev/null || true
-
-          # Check if there are files to commit
-          if [ -n "$(ls -A playwright/tests/ 2>/dev/null)" ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add playwright/
-            git commit -m "🤖 Add generated Playwright tests for PR #${{ inputs.pr_number }}" || echo "Nothing to commit"
-            git push
-            echo "✅ Committed test files"
-          else
-            echo "⚠️ No test files to commit"
-          fi
+        run: ./ai-test-agents/scripts/ci/commit-tests.sh ./caller-repo "${{ inputs.pr_number }}"
+        env:
+          TEST_FRAMEWORK: ${{ inputs.test_framework }}
