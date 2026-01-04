@@ -12,19 +12,30 @@
  * observability features like logging, metrics, and tracing."
  */
 
-import { Agent, AgentInput, AgentOutput, SystemContext } from '../types.js';
+import { Agent, AgentInput, AgentOutput } from '../types.js';
 import { LLMClient, LLMMessage, createLLMClient } from '../utils/llm.js';
+import { BuiltPrompt } from '../prompts/index.js';
 
 export abstract class BaseAgent implements Agent {
   abstract name: string;
   abstract description: string;
-  
+
   protected llm: LLMClient;
   protected verbose: boolean;
+
+  // Store last used prompt for artifact persistence
+  protected lastPrompt?: BuiltPrompt;
 
   constructor(llm?: LLMClient, verbose = false) {
     this.verbose = verbose;
     this.llm = llm || createLLMClient(verbose);
+  }
+
+  /**
+   * Get the last used prompt (for artifact persistence)
+   */
+  getLastPrompt(): BuiltPrompt | undefined {
+    return this.lastPrompt;
   }
 
   /**
@@ -43,8 +54,15 @@ export abstract class BaseAgent implements Agent {
       
       if (this.verbose) {
         this.log(`Prompt built with ${messages.length} messages`);
-        this.log(`System prompt length: ${messages.find(m => m.role === 'system')?.content.length || 0} chars`);
-        this.log(`User prompt length: ${messages.find(m => m.role === 'user')?.content.length || 0} chars`);
+        this.log(
+          `System prompt length: ${messages.find(m => m.role === 'system')?.content.length || 0} chars`
+        );
+        this.log(
+          `User prompt length: ${messages.find(m => m.role === 'user')?.content.length || 0} chars`
+        );
+        if (this.lastPrompt) {
+          this.log(`Prompt version: ${this.lastPrompt.metadata.version}`);
+        }
       }
 
       // Call LLM
@@ -67,6 +85,7 @@ export abstract class BaseAgent implements Agent {
         metadata: {
           duration,
           tokens: response.usage,
+          promptVersion: this.lastPrompt?.metadata.version,
         },
       };
     } catch (error) {
@@ -111,26 +130,5 @@ export abstract class BaseAgent implements Agent {
   }
 }
 
-/**
- * Helper to format context for prompts
- */
-export function formatContext(context: SystemContext): string {
-  const parts = [
-    '## Tech Stack',
-    `- Backend: ${context.techStack.backend}`,
-    `- Frontend: ${context.techStack.frontend}`,
-    `- Test Framework: ${context.techStack.testFramework}`,
-    `- Language: ${context.techStack.language}`,
-    '',
-    '## Testing Principles',
-    ...context.testingPrinciples.map(p => `- ${p}`),
-    '',
-    '## Domain Constraints',
-    ...context.domainConstraints.flatMap(c => [
-      `### ${c.entity}`,
-      ...c.rules.map(r => `- ${r}`),
-    ]),
-  ];
-
-  return parts.join('\n');
-}
+// Re-export formatContext from prompts for backward compatibility
+export { formatContext } from '../prompts/index.js';

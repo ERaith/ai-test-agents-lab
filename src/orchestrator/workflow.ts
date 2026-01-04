@@ -30,6 +30,7 @@ import {
   findExampleTests,
 } from '../utils/files.js';
 import { createLLMClient } from '../utils/llm.js';
+import { generatePromptArtifact } from '../prompts/index.js';
 
 // Context system imports
 import {
@@ -326,6 +327,13 @@ export class WorkflowOrchestrator {
     const planPath = getArtifactPath(state.storyId, 'test-plan.md');
     await writeFile(planPath, result.result);
 
+    // Save prompt artifact for reproducibility
+    const prompt = planner.getLastPrompt();
+    if (prompt) {
+      const promptPath = getArtifactPath(state.storyId, 'prompt-planner.md');
+      await writeFile(promptPath, generatePromptArtifact(prompt));
+    }
+
     // Register artifact
     this.registry.register('artifact', `${state.storyId}-plan`, result.result, {
       source: planPath,
@@ -361,6 +369,13 @@ export class WorkflowOrchestrator {
     // Save artifact
     const scenariosPath = getArtifactPath(state.storyId, 'scenarios.feature');
     await writeFile(scenariosPath, result.result);
+
+    // Save prompt artifact for reproducibility
+    const prompt = caseWorker.getLastPrompt();
+    if (prompt) {
+      const promptPath = getArtifactPath(state.storyId, 'prompt-cases.md');
+      await writeFile(promptPath, generatePromptArtifact(prompt));
+    }
 
     // Register artifact
     this.registry.register('artifact', `${state.storyId}-scenarios`, result.result, {
@@ -418,6 +433,13 @@ export class WorkflowOrchestrator {
     // Save artifact using framework-appropriate path
     const codePath = getTestPath(state.storyId);
     await writeFile(codePath, result.result);
+
+    // Save prompt artifact for reproducibility
+    const prompt = codeWorker.getLastPrompt();
+    if (prompt) {
+      const promptPath = getArtifactPath(state.storyId, 'prompt-code.md');
+      await writeFile(promptPath, generatePromptArtifact(prompt));
+    }
 
     // Register artifact
     this.registry.register('artifact', `${state.storyId}-code`, result.result, {
