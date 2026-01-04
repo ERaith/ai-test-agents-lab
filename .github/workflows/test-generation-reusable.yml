@@ -408,25 +408,32 @@ jobs:
     steps:
       - name: Post comment and update labels
         uses: actions/github-script@v7
+        env:
+          CALLER_REPO: ${{ inputs.caller_repo }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          PHASE: ${{ inputs.phase }}
+          TRIGGER_LABEL: ${{ inputs.trigger_label }}
+          TEST_PLAN: ${{ needs.generate.outputs.test_plan }}
+          SCENARIOS: ${{ needs.generate.outputs.scenarios }}
+          TEST_CODE: ${{ needs.generate.outputs.test_code }}
         with:
           github-token: ${{ secrets.CALLER_GITHUB_TOKEN }}
           script: |
-            const [owner, repo] = String('${{ inputs.caller_repo }}').split('/');
-            const prNumber = Number('${{ inputs.pr_number }}');
-            const phase = String('${{ inputs.phase }}');
-            const triggerLabel = String('${{ inputs.trigger_label }}');
+            const callerRepo = process.env.CALLER_REPO || '';
+            const [owner, repo] = callerRepo.split('/');
+            const prNumber = Number(process.env.PR_NUMBER || '0');
+            const phase = String(process.env.PHASE || '');
+            const triggerLabel = String(process.env.TRIGGER_LABEL || '');
 
-            // Job outputs come through as strings (possibly empty)
-            const testPlan = String(`${{ needs.generate.outputs.test_plan }}` || '');
-            const scenarios = String(`${{ needs.generate.outputs.scenarios }}` || '');
-            const testCode = String(`${{ needs.generate.outputs.test_code }}` || '');
+            const testPlan = process.env.TEST_PLAN || '';
+            const scenarios = process.env.SCENARIOS || '';
+            const testCode = process.env.TEST_CODE || '';
 
             let bodyLines = [];
             let completionLabel = '';
 
             if (phase === 'plan') {
               const content = testPlan.length > 60000 ? testPlan.slice(0, 60000) + '\n...(truncated)' : testPlan;
-
               bodyLines = [
                 '## 📝 Phase 1: Test Plan',
                 '',
@@ -440,11 +447,8 @@ jobs:
                 '---',
                 '**Next:** Add label `approve-plan` to continue to Phase 2'
               ];
-            }
-
-            if (phase === 'cases') {
+            } else if (phase === 'cases') {
               const content = scenarios.length > 60000 ? scenarios.slice(0, 60000) + '\n...(truncated)' : scenarios;
-
               bodyLines = [
                 '## 🥒 Phase 2: Gherkin Scenarios',
                 '',
@@ -460,11 +464,8 @@ jobs:
                 '---',
                 '**Next:** Add label `approve-cases` to continue to Phase 3'
               ];
-            }
-
-            if (phase === 'code') {
-              const preview = testCode.split('\n').slice(0, 50).join('\n');
-
+            } else if (phase === 'code') {
+              const preview = (testCode || '').split('\n').slice(0, 50).join('\n');
               bodyLines = [
                 '## 💻 Phase 3: Test Code',
                 '',
@@ -481,12 +482,11 @@ jobs:
                 '',
                 '**Next:** Pull changes, review, and merge!'
               ];
-
               completionLabel = 'tests-generated';
             }
 
             // Post comment
-            if (bodyLines.length) {
+            if (owner && repo && prNumber && bodyLines.length) {
               await github.rest.issues.createComment({
                 owner,
                 repo,
@@ -496,7 +496,7 @@ jobs:
             }
 
             // Remove trigger label
-            if (triggerLabel) {
+            if (owner && repo && prNumber && triggerLabel) {
               await github.rest.issues.removeLabel({
                 owner,
                 repo,
@@ -505,8 +505,8 @@ jobs:
               }).catch(() => {});
             }
 
-            // Add completion label (phase 3)
-            if (completionLabel) {
+            // Add completion label for phase 3
+            if (owner && repo && prNumber && completionLabel) {
               await github.rest.issues.addLabels({
                 owner,
                 repo,
@@ -514,7 +514,6 @@ jobs:
                 labels: [completionLabel]
               });
             }
-
       - name: Download test artifacts (Phase 3 only)
         if: inputs.phase == 'code' && inputs.pr_head_ref != ''
         uses: actions/download-artifact@v4
