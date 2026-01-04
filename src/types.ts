@@ -118,70 +118,6 @@ export interface AgentOutput {
 }
 
 // ============================================================================
-// PLANNER AGENT TYPES
-// ============================================================================
-
-export interface PlannerInput {
-  story: string;
-  existingTests?: string[];
-  coverageData?: CoverageData;
-}
-
-export interface TestPlan {
-  summary: string;
-  riskAnalysis: RiskItem[];
-  testGroups: TestGroup[];
-  dataRequirements: DataRequirement[];
-  openQuestions: string[];
-}
-
-export interface RiskItem {
-  risk: string;
-  likelihood: 'Low' | 'Medium' | 'High';
-  impact: 'Low' | 'Medium' | 'High';
-  mitigation: string;
-}
-
-export interface TestGroup {
-  type: 'unit' | 'integration' | 'e2e' | 'property';
-  testCases: TestCaseOutline[];
-}
-
-export interface TestCaseOutline {
-  id: string;
-  description: string;
-  priority: 'High' | 'Medium' | 'Low';
-  tags: string[];
-  notes?: string;
-}
-
-export interface DataRequirement {
-  description: string;
-  setupApproach: string;
-}
-
-export interface CoverageData {
-  totalLines: number;
-  coveredLines: number;
-  uncoveredFiles: string[];
-}
-
-// ============================================================================
-// WORKER AGENT TYPES
-// ============================================================================
-
-export interface CaseGeneratorInput {
-  testPlan: string;
-  storyId: string;
-}
-
-export interface CodeGeneratorInput {
-  gherkinScenarios: string;
-  exampleTests: string[];
-  helpers: string;
-}
-
-// ============================================================================
 // SYSTEM CONTEXT
 // ============================================================================
 
@@ -238,13 +174,3 @@ export interface ApprovalRequest {
 
 export type ApprovalCallback = (request: ApprovalRequest) => Promise<boolean>;
 
-// ============================================================================
-// CLI TYPES
-// ============================================================================
-
-export interface CLIOptions {
-  story: string;
-  skipApproval?: boolean;
-  verbose?: boolean;
-  dryRun?: boolean;
-}

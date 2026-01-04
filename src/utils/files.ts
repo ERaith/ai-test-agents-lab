@@ -121,13 +121,6 @@ export function getArtifactPath(storyId: string, filename: string): string {
 }
 
 /**
- * Get spec path for a story
- */
-export function getSpecPath(storyId: string): string {
-  return `specs/${storyId}.md`;
-}
-
-/**
  * Get test file path for a story
  * Uses configured test framework (Playwright by default)
  */
