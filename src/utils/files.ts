@@ -17,12 +17,12 @@ const PROJECT_ROOT = process.cwd();
 export type TestFramework = 'playwright' | 'cypress';
 
 /**
- * Get the configured test framework from environment or default to Playwright
+ * Get the configured test framework from config
  */
 export function getTestFramework(): TestFramework {
-  const framework = process.env.TEST_FRAMEWORK?.toLowerCase();
-  if (framework === 'cypress') return 'cypress';
-  return 'playwright';
+  // Import config inline to avoid circular dependency
+  const { config } = require('../config/index.js');
+  return config.testFramework;
 }
 
 /**

@@ -339,24 +339,24 @@ describe('${storyId} – Feature Under Test', () => {
  * Create a configured LLM client from environment
  */
 export function createLLMClient(verbose = false): LLMClient {
-  const anthropicKey = process.env.ANTHROPIC_API_KEY;
-  const openaiKey = process.env.OPENAI_API_KEY;
+  // Import config inline to avoid circular dependency
+  const { config } = require('../config/index.js');
 
-  if (anthropicKey) {
+  if (config.llm.provider === 'anthropic' && config.llm.anthropicKey) {
     console.log('🔑 Using Anthropic API');
     return new LLMClient({
       provider: 'anthropic',
-      model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514',
-      apiKey: anthropicKey,
+      model: config.llm.anthropicModel,
+      apiKey: config.llm.anthropicKey,
     }, verbose);
   }
 
-  if (openaiKey) {
+  if (config.llm.provider === 'openai' && config.llm.openaiKey) {
     console.log('🔑 Using OpenAI API');
     return new LLMClient({
       provider: 'openai',
-      model: process.env.OPENAI_MODEL || 'gpt-4o',
-      apiKey: openaiKey,
+      model: config.llm.openaiModel,
+      apiKey: config.llm.openaiKey,
     }, verbose);
   }
 
