@@ -35,18 +35,31 @@ interface CLIArgs {
     verbose: boolean;
     skipApproval: boolean;
     help: boolean;
+    withFeedback: boolean;
+    callerRepo?: string;
   };
 }
 
 function parseArgs(args: string[]): CLIArgs {
-  const flags = {
+  const flags: CLIArgs['flags'] = {
     verbose: args.includes('--verbose') || args.includes('-v'),
     skipApproval: args.includes('--skip-approval') || args.includes('-y'),
     help: args.includes('--help') || args.includes('-h'),
+    withFeedback: args.includes('--with-feedback') || args.includes('-f'),
   };
 
-  // Filter out flags
-  const positional = args.filter(a => !a.startsWith('-'));
+  // Extract --caller-repo value
+  const callerRepoIndex = args.findIndex(a => a === '--caller-repo');
+  if (callerRepoIndex !== -1 && args[callerRepoIndex + 1]) {
+    flags.callerRepo = args[callerRepoIndex + 1];
+  }
+
+  // Filter out flags and their values
+  const positional = args.filter((a, i) => {
+    if (a.startsWith('-')) return false;
+    if (i > 0 && args[i - 1] === '--caller-repo') return false;
+    return true;
+  });
 
   const command = (positional[0] || 'help') as CLIArgs['command'];
   const storyId = positional[1] || '';
@@ -75,9 +88,11 @@ COMMANDS:
   help                Show this help message
 
 OPTIONS:
-  -v, --verbose       Show detailed output
-  -y, --skip-approval Skip human approval prompts (for CI/testing)
-  -h, --help          Show this help message
+  -v, --verbose           Show detailed output
+  -y, --skip-approval     Skip human approval prompts (for CI/testing)
+  -f, --with-feedback     Include feedback/patch file in generation
+  --caller-repo <path>    Path to caller repo (for PR patch files)
+  -h, --help              Show this help message
 
 EXAMPLES:
   # List available stories
@@ -94,6 +109,9 @@ EXAMPLES:
 
   # Run full workflow without prompts (CI mode)
   npx tsx src/cli.ts full story-003-shopping-cart --skip-approval
+
+  # Re-run with feedback (create test-artifacts/story-001/feedback.md first)
+  npx tsx src/cli.ts plan story-001 --with-feedback
 
 ENVIRONMENT:
   ANTHROPIC_API_KEY   API key for Claude (recommended)
@@ -391,8 +409,18 @@ async function main(): Promise<void> {
   // Create orchestrator
   const orchestrator = new WorkflowOrchestrator(
     { humanApprovalRequired: !args.flags.skipApproval },
-    args.flags.verbose
+    args.flags.verbose,
+    args.flags.withFeedback,
+    args.flags.callerRepo
   );
+
+  if (args.flags.withFeedback) {
+    if (args.flags.callerRepo) {
+      console.log(`📝 Feedback mode enabled - checking ${args.flags.callerRepo}/.test-patches/\n`);
+    } else {
+      console.log('📝 Feedback mode enabled - checking test-artifacts/ for feedback.md\n');
+    }
+  }
 
   // Set up approval callback if not skipping
   if (!args.flags.skipApproval) {

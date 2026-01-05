@@ -31,6 +31,7 @@ import {
 } from '../utils/files.js';
 import { createLLMClient } from '../utils/llm.js';
 import { generatePromptArtifact } from '../prompts/index.js';
+import { loadFeedback, formatFeedbackForPrompt, Feedback } from '../utils/feedback.js';
 
 // Context system imports
 import {
@@ -56,6 +57,9 @@ export class WorkflowOrchestrator {
   private context: SystemContext | null = null;
   private approvalCallback: ApprovalCallback | null = null;
   private verbose: boolean;
+  private useFeedback: boolean;
+  private callerRepoPath: string | undefined;
+  private feedback: Feedback | null = null;
 
   // Context management
   private storage: StorageProvider;
@@ -63,9 +67,16 @@ export class WorkflowOrchestrator {
   private registry: DefaultContextRegistry;
   private memoryStore: FileMemoryStore;
 
-  constructor(config: Partial<OrchestratorConfig> = {}, verbose = false) {
+  constructor(
+    config: Partial<OrchestratorConfig> = {},
+    verbose = false,
+    useFeedback = false,
+    callerRepoPath?: string
+  ) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.verbose = verbose;
+    this.useFeedback = useFeedback;
+    this.callerRepoPath = callerRepoPath;
 
     // Initialize context management
     this.storage = new LocalStorageProvider();
@@ -249,6 +260,14 @@ export class WorkflowOrchestrator {
     });
 
     this.log(`Loaded story: ${storyPath}`);
+
+    // Load feedback/patch file if enabled
+    if (this.useFeedback) {
+      this.feedback = await loadFeedback(state.storyId, this.callerRepoPath);
+      if (this.feedback) {
+        this.log(`Loaded feedback from: ${this.feedback.source}`);
+      }
+    }
   }
 
   private async loadExistingPlan(state: WorkflowState): Promise<void> {
@@ -301,7 +320,7 @@ export class WorkflowOrchestrator {
     const memoryContext = await this.getMemoryContext(state.artifacts.story);
     const memoryPrompt = formatMemoryForPrompt(memoryContext);
 
-    // Build payload with memory context
+    // Build payload with memory context and feedback
     const payload: any = {
       story: state.artifacts.story,
       storyId: state.storyId,
@@ -310,6 +329,15 @@ export class WorkflowOrchestrator {
     // Add memory context as existing patterns if available
     if (memoryPrompt) {
       payload.existingTestPatterns = memoryPrompt;
+    }
+
+    // Add feedback if available
+    if (this.feedback) {
+      const feedbackPrompt = formatFeedbackForPrompt(this.feedback, 'plan');
+      if (feedbackPrompt) {
+        payload.feedback = feedbackPrompt;
+        this.log('Including user feedback in plan generation');
+      }
     }
 
     const result = await planner.execute({
@@ -351,13 +379,25 @@ export class WorkflowOrchestrator {
     const llm = createLLMClient();
     const caseWorker = new CaseWorkerAgent(llm, this.verbose);
 
+    // Build payload with optional feedback
+    const payload: any = {
+      testPlan: state.artifacts.testPlan,
+      storyId: state.storyId,
+      story: state.artifacts.story || '',
+    };
+
+    // Add feedback if available
+    if (this.feedback) {
+      const feedbackPrompt = formatFeedbackForPrompt(this.feedback, 'cases');
+      if (feedbackPrompt) {
+        payload.feedback = feedbackPrompt;
+        this.log('Including user feedback in case generation');
+      }
+    }
+
     const result = await caseWorker.execute({
       context: this.context,
-      payload: {
-        testPlan: state.artifacts.testPlan,
-        storyId: state.storyId,
-        story: state.artifacts.story || '',
-      },
+      payload,
     });
 
     if (!result.success || !result.result) {
@@ -414,14 +454,26 @@ export class WorkflowOrchestrator {
       // No helpers available
     }
 
+    // Build payload with optional feedback
+    const payload: any = {
+      gherkinScenarios: state.artifacts.gherkinScenarios,
+      storyId: state.storyId,
+      exampleTests,
+      helpers,
+    };
+
+    // Add feedback if available
+    if (this.feedback) {
+      const feedbackPrompt = formatFeedbackForPrompt(this.feedback, 'code');
+      if (feedbackPrompt) {
+        payload.feedback = feedbackPrompt;
+        this.log('Including user feedback in code generation');
+      }
+    }
+
     const result = await codeWorker.execute({
       context: this.context,
-      payload: {
-        gherkinScenarios: state.artifacts.gherkinScenarios,
-        storyId: state.storyId,
-        exampleTests,
-        helpers,
-      },
+      payload,
     });
 
     if (!result.success || !result.result) {

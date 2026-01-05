@@ -98,21 +98,25 @@ sed -i 's/YOUR_ORG/your-actual-org/g' .github/workflows/generate-tests.yml
 
 ```
 ├── .github/workflows/
-│   ├── phased-generation.yml        # Main workflow with approval gates
 │   └── test-generation-reusable.yml # Reusable workflow (called by Repo A)
+├── scripts/ci/              # CI scripts (thin YAML, thick scripts pattern)
+│   ├── setup-story.sh       # Create story file from content
+│   ├── run-phase.sh         # Run CLI phase with output capture
+│   ├── sync-s3.sh           # S3 sync for context/artifacts
+│   ├── post-pr-comment.ts   # Post results to PR
+│   └── commit-tests.sh      # Commit tests to caller repo
 ├── src/
 │   ├── agents/          # Planner, CaseWorker, CodeWorker agents
 │   ├── orchestrator/    # Workflow state machine
 │   ├── context/         # Caching, registry, cross-story memory
 │   ├── storage/         # Local + S3 storage providers
-│   ├── analysis/        # PR diff analyzer
-│   ├── integrations/    # Jira integration (optional)
-│   ├── prompts/         # AI prompt templates
-│   └── utils/           # LLM client, file helpers
+│   ├── prompts/         # AI prompt modules (versioned)
+│   ├── config/          # Centralized configuration
+│   └── utils/           # LLM client, file helpers, feedback
 ├── templates/           # Workflow files to copy to Repo A
+│   └── feedback.md      # Feedback file template
 └── docs/
-    ├── IMPLEMENTATION-GUIDE.md
-    └── DEPLOYMENT-CHECKLIST.md
+    └── IMPLEMENTATION-GUIDE.md
 ```
 
 ## What Gets Generated
@@ -135,12 +139,55 @@ artifacts/
 **Cross-PR learning** (`{bucket}/{repo}/memory/`):
 - Patterns from previous PRs improve future generations
 
+## Feedback Loop
+
+Not happy with generated tests? Provide a patch file to improve them:
+
+### PR Workflow (Recommended)
+
+1. Create `.test-patches/pr-<number>.md` in your repo
+2. Commit to your PR branch
+3. Remove and re-add the `generate-tests` label
+4. Tests regenerate with your feedback
+5. Delete patch file before merging
+
+### Local Development
+
+1. Create `test-artifacts/<story-id>/feedback.md`
+2. Re-run with `--with-feedback` flag
+
+See [templates/feedback.md](templates/feedback.md) for format.
+
+## CLI Commands
+
+```bash
+# List available stories
+npx tsx src/cli.ts list
+
+# Generate test plan
+npx tsx src/cli.ts plan story-001
+
+# Generate Gherkin scenarios (requires plan)
+npx tsx src/cli.ts cases story-001
+
+# Generate test code (requires scenarios)
+npx tsx src/cli.ts code story-001
+
+# Full workflow
+npx tsx src/cli.ts full story-001
+
+# Options
+--verbose, -v           Show detailed output
+--skip-approval, -y     Skip approval prompts (CI mode)
+--with-feedback, -f     Incorporate feedback.md into generation
+```
+
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
+| [Quick Start](docs/QUICK-START.md) | Get running in 5 minutes |
 | [Implementation Guide](docs/IMPLEMENTATION-GUIDE.md) | Detailed setup instructions |
-| [Deployment Checklist](docs/DEPLOYMENT-CHECKLIST.md) | Step-by-step verification |
 
 ## Cost
 

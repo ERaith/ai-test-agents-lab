@@ -78,7 +78,7 @@ ${getSharedRules(['noHallucination', 'consistentFormat', 'noExtraContent'])}`;
 // ============================================================================
 
 function buildUserPrompt(payload: CaseWorkerPayload): string {
-  return `Convert the following test plan into Gherkin scenarios.
+  let prompt = `Convert the following test plan into Gherkin scenarios.
 
 ## Story: ${payload.storyId}
 
@@ -87,10 +87,20 @@ ${payload.story}
 ## Test Plan
 
 ${payload.testPlan}
+`;
 
+  if (payload.feedback) {
+    prompt += `
+${payload.feedback}
+`;
+  }
+
+  prompt += `
 ---
 
 Generate valid Gherkin scenarios. Output ONLY the Gherkin - no markdown formatting, no explanations.`;
+
+  return prompt;
 }
 
 // ============================================================================

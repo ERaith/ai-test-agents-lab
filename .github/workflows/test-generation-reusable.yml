@@ -181,6 +181,19 @@ jobs:
           S3_PREFIX: ${{ inputs.s3_prefix || github.repository }}
           AWS_REGION: ${{ inputs.aws_region }}
 
+      # Checkout caller repo to check for patch files (.test-patches/pr-<number>.md)
+      - name: Checkout caller repo (for patch files)
+        if: inputs.caller_repo != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.caller_repo }}
+          ref: ${{ inputs.pr_head_ref }}
+          token: ${{ secrets.CALLER_GITHUB_TOKEN || github.token }}
+          path: caller-repo
+          sparse-checkout: |
+            .test-patches
+            .github/test-patches
+
       - name: Generate test plan (Phase 1)
         id: plan
         if: inputs.phase == 'plan' || inputs.phase == 'full'
@@ -189,6 +202,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           TEST_FRAMEWORK: ${{ inputs.test_framework }}
+          CALLER_REPO_PATH: ${{ inputs.caller_repo != '' && '../caller-repo' || '' }}
 
       - name: Generate test cases (Phase 2)
         id: cases
@@ -198,6 +212,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           TEST_FRAMEWORK: ${{ inputs.test_framework }}
+          CALLER_REPO_PATH: ${{ inputs.caller_repo != '' && '../caller-repo' || '' }}
 
       - name: Generate test code (Phase 3)
         id: code
@@ -207,6 +222,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           TEST_FRAMEWORK: ${{ inputs.test_framework }}
+          CALLER_REPO_PATH: ${{ inputs.caller_repo != '' && '../caller-repo' || '' }}
 
       - name: Upload context to S3
         if: inputs.s3_bucket != '' && always()

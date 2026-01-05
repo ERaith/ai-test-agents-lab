@@ -76,6 +76,12 @@ ${payload.existingTestPatterns}
 `;
   }
 
+  if (payload.feedback) {
+    prompt += `
+${payload.feedback}
+`;
+  }
+
   prompt += `
 Please generate a comprehensive test plan in markdown format.
 Include clear TODOs for any details that require human clarification.`;

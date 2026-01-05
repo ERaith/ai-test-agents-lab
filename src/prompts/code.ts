@@ -197,6 +197,12 @@ ${payload.helpers}
 `;
   }
 
+  if (payload.feedback) {
+    prompt += `
+${payload.feedback}
+`;
+  }
+
   prompt += `
 ---
 

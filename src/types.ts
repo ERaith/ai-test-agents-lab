@@ -88,12 +88,14 @@ export interface PlannerPayload {
   story: string;
   storyId: string;
   existingTestPatterns?: string;
+  feedback?: string;
 }
 
 export interface CaseWorkerPayload {
   testPlan: string;
   storyId: string;
   story: string;
+  feedback?: string;
 }
 
 export interface CodeWorkerPayload {
@@ -101,6 +103,7 @@ export interface CodeWorkerPayload {
   storyId: string;
   exampleTests?: string;
   helpers?: string;
+  feedback?: string;
 }
 
 export interface AgentOutput {

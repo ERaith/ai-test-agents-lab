@@ -12,6 +12,13 @@
 # Environment:
 #   ANTHROPIC_API_KEY - Required for LLM calls
 #   TEST_FRAMEWORK    - playwright or cypress (default: playwright)
+#   CALLER_REPO_PATH  - Path to caller repo (for patch file detection)
+#
+# Patch Files:
+#   If CALLER_REPO_PATH is set and a patch file exists at:
+#   - .test-patches/pr-<number>.md
+#   - .github/test-patches/pr-<number>.md
+#   It will be automatically included in generation.
 #
 # Output:
 #   Runs the CLI command and writes content to $GITHUB_OUTPUT
@@ -23,6 +30,8 @@ set -euo pipefail
 PHASE="${1:-}"
 STORY_ID="${2:-}"
 SKIP_APPROVAL=""
+WITH_FEEDBACK=""
+CALLER_REPO_ARG=""
 
 # Check for --skip-approval flag
 for arg in "$@"; do
@@ -30,6 +39,23 @@ for arg in "$@"; do
     SKIP_APPROVAL="--skip-approval"
   fi
 done
+
+# Check for patch file in caller repo
+CALLER_REPO_PATH="${CALLER_REPO_PATH:-}"
+if [[ -n "$CALLER_REPO_PATH" ]]; then
+  # Extract PR number from story ID (e.g., pr-123 -> 123)
+  PR_NUM=$(echo "$STORY_ID" | grep -oE '[0-9]+' | head -1)
+
+  if [[ -n "$PR_NUM" ]]; then
+    # Check for patch file
+    if [[ -f "${CALLER_REPO_PATH}/.test-patches/pr-${PR_NUM}.md" ]] || \
+       [[ -f "${CALLER_REPO_PATH}/.github/test-patches/pr-${PR_NUM}.md" ]]; then
+      echo "📝 Found patch file for PR #${PR_NUM}"
+      WITH_FEEDBACK="--with-feedback"
+      CALLER_REPO_ARG="--caller-repo ${CALLER_REPO_PATH}"
+    fi
+  fi
+fi
 
 if [[ -z "$PHASE" ]] || [[ -z "$STORY_ID" ]]; then
   echo "Error: phase and story_id are required"
@@ -69,7 +95,8 @@ fi
 
 # Run the phase
 echo "Running phase: $PHASE for story: $STORY_ID"
-npx tsx src/cli.ts "$PHASE" "$STORY_ID" $SKIP_APPROVAL
+# shellcheck disable=SC2086
+npx tsx src/cli.ts "$PHASE" "$STORY_ID" $SKIP_APPROVAL $WITH_FEEDBACK $CALLER_REPO_ARG
 
 # Capture output for GitHub Actions
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
